@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chris F Ravenscroft <chris@voilaweb.com>
+Date: Sun, 8 Nov 2026 21:02:32 -0800
+Subject: [PATCH 02/12] local: Files panel shows the filetree mod, labelled
+ Tree
+
+---
+ layouts/shepherdr.json  | 2 +-
+ mods/tabs-tasks/main.js | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/layouts/shepherdr.json b/layouts/shepherdr.json
+index 8e73e72e..5f2d44a1 100644
+--- a/layouts/shepherdr.json
++++ b/layouts/shepherdr.json
+@@ -120,7 +120,7 @@
+                       "id": "files",
+                       "type": "block",
+                       "content": {
+-                        "mod": "files"
++                        "mod": "filetree"
+                       }
+                     },
+                     {
+diff --git a/mods/tabs-tasks/main.js b/mods/tabs-tasks/main.js
+index 8c0325f4..e2892c3b 100644
+--- a/mods/tabs-tasks/main.js
++++ b/mods/tabs-tasks/main.js
+@@ -205,7 +205,7 @@ export default class Tabs extends View {
+       .on_scroll_wheel(e => { if (Math.abs(e.delta.y) >= 1) run(e.delta.y > 0 ? "tab.prev" : "tab.next"); })
+       .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().gap(3).overflow_x_scrollbar().children(tabsShown ? shown.map(item) : []))
+       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu-tasks", kind: "popup", width: 250, height: 543, props: { right: this.right } })))
+-      .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
++      .when(enabled.includes("files"), el => el.child(panelButton("files", "Tree", "mods/filetree/folder.svg")))
+       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
+       .child(panelButton("tasks", "Tasks", "mods/tasks/tasks.svg", [counts ? inboxCount() : 0, greens ? readyCount() : 0]))
+       .when(enabled.includes("artifacts"), el => el.child(panelButton("artifacts", "Artifacts", "mods/artifacts/artifacts.svg")))

@@ -1,0 +1,105 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chris F Ravenscroft <chris@voilaweb.com>
+Date: Sun, 8 Nov 2026 23:08:40 -0800
+Subject: [PATCH 10/12] local: a Hermes question answered in its terminal shows
+ as answered, with the answer
+
+---
+ core/hermes.js                | 13 +++++++++++++
+ mods/chat/core/hermes.js      | 13 +++++++++++++
+ mods/pane-chat/core/hermes.js | 13 +++++++++++++
+ 3 files changed, 39 insertions(+)
+
+diff --git a/core/hermes.js b/core/hermes.js
+index 430c23f6..d37c8f83 100644
+--- a/core/hermes.js
++++ b/core/hermes.js
+@@ -90,6 +90,11 @@ def emit(r):
+             out = json.loads(content or "")
+         except ValueError:
+             out = None
++        # A clarify question's end: answered (what was picked or typed) or cancelled.
++        if tool == "clarify" and isinstance(out, dict) and isinstance(out.get("responses"), list):
++            said = [str(x.get("user_response")) for x in out["responses"] if isinstance(x, dict) and x.get("user_response")]
++            done = {"hermes": 1, "role": "clarify_done", "call_id": call_id, "outcome": out.get("outcome"), "answers": said}
++            print("%d\tJ\t%s" % (i, json.dumps(done, ensure_ascii=False)))
+         if isinstance(out, dict) and (out.get("exit_code") not in (None, 0) or out.get("error")):
+             fail = {"hermes": 1, "role": "tool_failed", "call_id": call_id, "exit": out.get("exit_code")}
+             print("%d\tJ\t%s" % (i, json.dumps(fail)))
+@@ -163,6 +168,14 @@ export function hermesFeed(conv, l, off, cleanUser) {
+     if (u) conv.user(`u${off}`, { ...u, at });
+     return;
+   }
++  if (l.role === "clarify_done") {
++    const q = conv.questions.get(String(l.call_id ?? ""));
++    const said = (l.answers ?? []).filter(Boolean);
++    if (q && (l.outcome === "submitted" || said.length)) q.closed = "answered";
++    // The answer as the person's own message right after the question, as Claude Code's (Conversation.answers()).
++    if (said.length) { conv.waiting = false; conv.push({ kind: "user", id: `ua${off}`, text: said.join("\n\n"), at, answer: true }); }
++    return;
++  }
+   if (l.role === "tool_failed") {
+     const s = conv.calls.get(String(l.call_id ?? ""));
+     if (s) { s.failed = true; s.line += l.exit != null ? ` (exit ${l.exit})` : " (failed)"; }
+diff --git a/mods/chat/core/hermes.js b/mods/chat/core/hermes.js
+index 430c23f6..d37c8f83 100644
+--- a/mods/chat/core/hermes.js
++++ b/mods/chat/core/hermes.js
+@@ -90,6 +90,11 @@ def emit(r):
+             out = json.loads(content or "")
+         except ValueError:
+             out = None
++        # A clarify question's end: answered (what was picked or typed) or cancelled.
++        if tool == "clarify" and isinstance(out, dict) and isinstance(out.get("responses"), list):
++            said = [str(x.get("user_response")) for x in out["responses"] if isinstance(x, dict) and x.get("user_response")]
++            done = {"hermes": 1, "role": "clarify_done", "call_id": call_id, "outcome": out.get("outcome"), "answers": said}
++            print("%d\tJ\t%s" % (i, json.dumps(done, ensure_ascii=False)))
+         if isinstance(out, dict) and (out.get("exit_code") not in (None, 0) or out.get("error")):
+             fail = {"hermes": 1, "role": "tool_failed", "call_id": call_id, "exit": out.get("exit_code")}
+             print("%d\tJ\t%s" % (i, json.dumps(fail)))
+@@ -163,6 +168,14 @@ export function hermesFeed(conv, l, off, cleanUser) {
+     if (u) conv.user(`u${off}`, { ...u, at });
+     return;
+   }
++  if (l.role === "clarify_done") {
++    const q = conv.questions.get(String(l.call_id ?? ""));
++    const said = (l.answers ?? []).filter(Boolean);
++    if (q && (l.outcome === "submitted" || said.length)) q.closed = "answered";
++    // The answer as the person's own message right after the question, as Claude Code's (Conversation.answers()).
++    if (said.length) { conv.waiting = false; conv.push({ kind: "user", id: `ua${off}`, text: said.join("\n\n"), at, answer: true }); }
++    return;
++  }
+   if (l.role === "tool_failed") {
+     const s = conv.calls.get(String(l.call_id ?? ""));
+     if (s) { s.failed = true; s.line += l.exit != null ? ` (exit ${l.exit})` : " (failed)"; }
+diff --git a/mods/pane-chat/core/hermes.js b/mods/pane-chat/core/hermes.js
+index 430c23f6..d37c8f83 100644
+--- a/mods/pane-chat/core/hermes.js
++++ b/mods/pane-chat/core/hermes.js
+@@ -90,6 +90,11 @@ def emit(r):
+             out = json.loads(content or "")
+         except ValueError:
+             out = None
++        # A clarify question's end: answered (what was picked or typed) or cancelled.
++        if tool == "clarify" and isinstance(out, dict) and isinstance(out.get("responses"), list):
++            said = [str(x.get("user_response")) for x in out["responses"] if isinstance(x, dict) and x.get("user_response")]
++            done = {"hermes": 1, "role": "clarify_done", "call_id": call_id, "outcome": out.get("outcome"), "answers": said}
++            print("%d\tJ\t%s" % (i, json.dumps(done, ensure_ascii=False)))
+         if isinstance(out, dict) and (out.get("exit_code") not in (None, 0) or out.get("error")):
+             fail = {"hermes": 1, "role": "tool_failed", "call_id": call_id, "exit": out.get("exit_code")}
+             print("%d\tJ\t%s" % (i, json.dumps(fail)))
+@@ -163,6 +168,14 @@ export function hermesFeed(conv, l, off, cleanUser) {
+     if (u) conv.user(`u${off}`, { ...u, at });
+     return;
+   }
++  if (l.role === "clarify_done") {
++    const q = conv.questions.get(String(l.call_id ?? ""));
++    const said = (l.answers ?? []).filter(Boolean);
++    if (q && (l.outcome === "submitted" || said.length)) q.closed = "answered";
++    // The answer as the person's own message right after the question, as Claude Code's (Conversation.answers()).
++    if (said.length) { conv.waiting = false; conv.push({ kind: "user", id: `ua${off}`, text: said.join("\n\n"), at, answer: true }); }
++    return;
++  }
+   if (l.role === "tool_failed") {
+     const s = conv.calls.get(String(l.call_id ?? ""));
+     if (s) { s.failed = true; s.line += l.exit != null ? ` (exit ${l.exit})` : " (failed)"; }

@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chris F Ravenscroft <chris@voilaweb.com>
+Date: Mon, 9 Nov 2026 10:44:35 -0800
+Subject: [PATCH 12/12] local: a Hermes that exited to its shell ends its chat
+ (its last status outlives it)
+
+---
+ core/chat-reader.js           | 3 ++-
+ mods/chat/core/chat-reader.js | 3 ++-
+ mods/chat/main.js             | 3 ++-
+ test/hermes.test.js           | 5 +++++
+ 4 files changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/core/chat-reader.js b/core/chat-reader.js
+index 91c65df9..15591713 100644
+--- a/core/chat-reader.js
++++ b/core/chat-reader.js
+@@ -13,7 +13,8 @@ export const KEEP = 2000;
+ export const KINDS = { "claude-code": "claude", claude: "claude", codex: "codex", hermes: "hermes" };
+ 
+ // The CLI a terminal runs, as the chat knows them ("claude", "codex"), else null.
+-export const kindOf = (t) => KINDS[t?.status?.app] ?? KINDS[t?.foreground?.name] ?? (isHermes(t) ? "hermes" : null);
++// local: Hermes's last status (its plugin's report) outlives it: "hermes" only while it still runs there.
++export const kindOf = (t) => { const k = KINDS[t?.status?.app] ?? KINDS[t?.foreground?.name] ?? (isHermes(t) ? "hermes" : null); return k === "hermes" && !isHermes(t) ? null : k; };
+ 
+ export class ChatReader {
+   constructor(io, addr) {
+diff --git a/mods/chat/core/chat-reader.js b/mods/chat/core/chat-reader.js
+index 91c65df9..15591713 100644
+--- a/mods/chat/core/chat-reader.js
++++ b/mods/chat/core/chat-reader.js
+@@ -13,7 +13,8 @@ export const KEEP = 2000;
+ export const KINDS = { "claude-code": "claude", claude: "claude", codex: "codex", hermes: "hermes" };
+ 
+ // The CLI a terminal runs, as the chat knows them ("claude", "codex"), else null.
+-export const kindOf = (t) => KINDS[t?.status?.app] ?? KINDS[t?.foreground?.name] ?? (isHermes(t) ? "hermes" : null);
++// local: Hermes's last status (its plugin's report) outlives it: "hermes" only while it still runs there.
++export const kindOf = (t) => { const k = KINDS[t?.status?.app] ?? KINDS[t?.foreground?.name] ?? (isHermes(t) ? "hermes" : null); return k === "hermes" && !isHermes(t) ? null : k; };
+ 
+ export class ChatReader {
+   constructor(io, addr) {
+diff --git a/mods/chat/main.js b/mods/chat/main.js
+index 90cc68cd..e9be7e62 100644
+--- a/mods/chat/main.js
++++ b/mods/chat/main.js
+@@ -1076,7 +1076,8 @@ export default class Chat extends View {
+     const pane = this.lastPane ?? (this.slot && this.slotRec()?.pane) ?? null;
+     if (!this.thread && !this.inner && !this.swapping && !t.labels?.["herdr.chat"] && pane && !panes().some((p) => p.terminal === this.addr)
+       && panes().some((p) => p.pane === pane && p.mod === "chat")) await hc(["label", this.addr, `herdr.chat=${pane}`]);
+-    const kind = KINDS[t.status?.app] ?? KINDS[t.foreground?.name] ?? (isHermes(t) ? "hermes" : undefined); // local: Hermes
++    let kind = KINDS[t.status?.app] ?? KINDS[t.foreground?.name] ?? (isHermes(t) ? "hermes" : undefined); // local: Hermes
++    if (kind === "hermes" && !isHermes(t)) kind = undefined; // local: its last status outlives it (exited to the shell)
+     // Back at its shell because the session it resumed is gone: a new agent starts there.
+     if (!kind) { if (!(await this.checkLost(this.addr, cx, t))) this.set("unsupported", cx); return; }
+     this.t = t;
+diff --git a/test/hermes.test.js b/test/hermes.test.js
+index 4c218fbe..0b783412 100644
+--- a/test/hermes.test.js
++++ b/test/hermes.test.js
+@@ -64,3 +64,8 @@ test("answers become Hermes's keys: a choice's number, Other's number then the w
+   expect(hermesSteps(QS, ["Blue", "Medium please"])).toEqual([{ keys: ["2"] }, { keys: ["3"] }, { paste: "Medium please" }]);
+   expect(hermesSteps(QS, ["Red"])).toBe(null);
+ });
++
++test("a Hermes that exited to its shell is no longer a Hermes chat (its last status stays behind)", () => {
++  expect(kindOf({ status: { app: "hermes", state: "working" }, foreground: { name: "zsh", argv: ["zsh"] } })).toBe(null);
++  expect(kindOf({ status: { app: "hermes" }, foreground: { name: "hermes", argv: ["hermes"] } })).toBe("hermes");
++});

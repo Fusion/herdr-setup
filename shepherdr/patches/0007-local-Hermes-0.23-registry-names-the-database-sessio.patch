@@ -1,0 +1,102 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chris F Ravenscroft <chris@voilaweb.com>
+Date: Sun, 8 Nov 2026 22:52:55 -0800
+Subject: [PATCH 07/12] local: Hermes 0.23 registry names the database session
+ id: match it exactly (resumed sessions); no tty cache
+
+---
+ core/hermes.js                | 17 ++++++++++++++---
+ mods/chat/core/hermes.js      | 17 ++++++++++++++---
+ mods/pane-chat/core/hermes.js | 17 ++++++++++++++---
+ 3 files changed, 42 insertions(+), 9 deletions(-)
+
+diff --git a/core/hermes.js b/core/hermes.js
+index 982d9514..a23c2b78 100644
+--- a/core/hermes.js
++++ b/core/hermes.js
+@@ -31,11 +31,22 @@ except Exception:
+ mine = sorted((e for e in entries if str(e.get("pid")) in pids), key=lambda e: e.get("updated_at") or 0)
+ if not mine:
+     sys.exit()
+-# The registry's id isn't the database's ("local-<hash of a request id>"): the session row that started
+-# within a moment of the registry entry is it.
++# Hermes 0.23 names the database's id ("local-…") in the registry: exact. Older ones named another id, so
++# then the session row that started within a moment of the registry entry is it.
++ids = [str(x) for x in ((mine[-1].get("metadata") or {}).get("live_session_id"), mine[-1].get("session_id")) if x]
+ at = float(mine[-1].get("started_at") or 0)
+ best = None
+-for db in [os.path.join(root, "state.db"), *glob.glob(os.path.join(root, "profiles", "*", "state.db"))]:
++dbs = [os.path.join(root, "state.db"), *glob.glob(os.path.join(root, "profiles", "*", "state.db"))]
++for db in dbs:
++    try:
++        con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
++        for sid in ids:
++            if con.execute("select 1 from sessions where id=?", (sid,)).fetchone():
++                has = con.execute("select 1 from messages where session_id=? limit 1", (sid,)).fetchone()
++                print("%s#%s" % (db, sid) if has else "pending"); sys.exit()
++    except sqlite3.Error:
++        pass
++for db in dbs:
+     try:
+         con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
+         for sid, started in con.execute("select id, started_at from sessions where started_at between ? and ?", (at - 10, at + 10)).fetchall():
+diff --git a/mods/chat/core/hermes.js b/mods/chat/core/hermes.js
+index 982d9514..a23c2b78 100644
+--- a/mods/chat/core/hermes.js
++++ b/mods/chat/core/hermes.js
+@@ -31,11 +31,22 @@ except Exception:
+ mine = sorted((e for e in entries if str(e.get("pid")) in pids), key=lambda e: e.get("updated_at") or 0)
+ if not mine:
+     sys.exit()
+-# The registry's id isn't the database's ("local-<hash of a request id>"): the session row that started
+-# within a moment of the registry entry is it.
++# Hermes 0.23 names the database's id ("local-…") in the registry: exact. Older ones named another id, so
++# then the session row that started within a moment of the registry entry is it.
++ids = [str(x) for x in ((mine[-1].get("metadata") or {}).get("live_session_id"), mine[-1].get("session_id")) if x]
+ at = float(mine[-1].get("started_at") or 0)
+ best = None
+-for db in [os.path.join(root, "state.db"), *glob.glob(os.path.join(root, "profiles", "*", "state.db"))]:
++dbs = [os.path.join(root, "state.db"), *glob.glob(os.path.join(root, "profiles", "*", "state.db"))]
++for db in dbs:
++    try:
++        con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
++        for sid in ids:
++            if con.execute("select 1 from sessions where id=?", (sid,)).fetchone():
++                has = con.execute("select 1 from messages where session_id=? limit 1", (sid,)).fetchone()
++                print("%s#%s" % (db, sid) if has else "pending"); sys.exit()
++    except sqlite3.Error:
++        pass
++for db in dbs:
+     try:
+         con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
+         for sid, started in con.execute("select id, started_at from sessions where started_at between ? and ?", (at - 10, at + 10)).fetchall():
+diff --git a/mods/pane-chat/core/hermes.js b/mods/pane-chat/core/hermes.js
+index 982d9514..a23c2b78 100644
+--- a/mods/pane-chat/core/hermes.js
++++ b/mods/pane-chat/core/hermes.js
+@@ -31,11 +31,22 @@ except Exception:
+ mine = sorted((e for e in entries if str(e.get("pid")) in pids), key=lambda e: e.get("updated_at") or 0)
+ if not mine:
+     sys.exit()
+-# The registry's id isn't the database's ("local-<hash of a request id>"): the session row that started
+-# within a moment of the registry entry is it.
++# Hermes 0.23 names the database's id ("local-…") in the registry: exact. Older ones named another id, so
++# then the session row that started within a moment of the registry entry is it.
++ids = [str(x) for x in ((mine[-1].get("metadata") or {}).get("live_session_id"), mine[-1].get("session_id")) if x]
+ at = float(mine[-1].get("started_at") or 0)
+ best = None
+-for db in [os.path.join(root, "state.db"), *glob.glob(os.path.join(root, "profiles", "*", "state.db"))]:
++dbs = [os.path.join(root, "state.db"), *glob.glob(os.path.join(root, "profiles", "*", "state.db"))]
++for db in dbs:
++    try:
++        con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
++        for sid in ids:
++            if con.execute("select 1 from sessions where id=?", (sid,)).fetchone():
++                has = con.execute("select 1 from messages where session_id=? limit 1", (sid,)).fetchone()
++                print("%s#%s" % (db, sid) if has else "pending"); sys.exit()
++    except sqlite3.Error:
++        pass
++for db in dbs:
+     try:
+         con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
+         for sid, started in con.execute("select id, started_at from sessions where started_at between ? and ?", (at - 10, at + 10)).fetchall():

@@ -1,0 +1,248 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chris F Ravenscroft <chris@voilaweb.com>
+Date: Sun, 8 Nov 2026 21:23:16 -0800
+Subject: [PATCH 05/12] local: pane header offers Chat for a Hermes terminal
+
+---
+ lib/COPIES                    |   2 +-
+ mods/pane-chat/core/hermes.js | 172 ++++++++++++++++++++++++++++++++++
+ mods/pane-chat/main.js        |  20 +++-
+ 3 files changed, 192 insertions(+), 2 deletions(-)
+ create mode 100644 mods/pane-chat/core/hermes.js
+
+diff --git a/lib/COPIES b/lib/COPIES
+index f8d3e6bc..e8ec629a 100644
+--- a/lib/COPIES
++++ b/lib/COPIES
+@@ -28,7 +28,7 @@ core/person.js: chat shepherdr-settings tabs-tasks
+ core/spaces.js: chat spaces-chat shepherdr-settings jump pane-chat
+ core/autopilot.js: pane-chat shepherdr-settings
+ core/chat-reader.js: chat
+-core/hermes.js: chat
++core/hermes.js: chat pane-chat
+ core/clean-env.js: chat
+ core/worktree.js: task-changes task-pr
+ core/recipe.js: artifacts
+diff --git a/mods/pane-chat/core/hermes.js b/mods/pane-chat/core/hermes.js
+new file mode 100644
+index 00000000..982d9514
+--- /dev/null
++++ b/mods/pane-chat/core/hermes.js
+@@ -0,0 +1,172 @@
++// local: Hermes Agent (github.com/NousResearch/hermes-agent) in the chat, beside Claude Code and Codex.
++// Kept in its own file so upstream updates rarely conflict; core/chat-log.js and core/chat-reader.js only hook it in.
++//
++// Hermes keeps every session in one SQLite file (~/.hermes/state.db, or a profile's), not a log per session, and
++// names which process runs a session in ~/.hermes/runtime/active_sessions.json ({ entries: [{ pid, started_at }] })
++// under an id the database doesn't use, so the session is matched by its start time. Its "log path" is
++// "<state.db>#<session id>", and a message's row id stands in for the byte offset Claude Code's and Codex's logs use.
++
++// A Hermes terminal: Herdr reports no app for it (no hook integration), and its foreground is Hermes's own python.
++export function isHermes(t) {
++  const argv = t?.foreground?.argv ?? [];
++  return t?.foreground?.name === "hermes" || argv.some((a) => /hermes-agent|hermes_cli/.test(String(a)));
++}
++
++// FIND's Hermes branch (args: kind pid): prints "<db>#<session>", "pending" (no messages yet), or nothing.
++// shortcut: matched by start time (within 10 s), not an exact id; two Hermes started in the same moment could swap. Use an exact id if Hermes ever stores one.
++// shortcut: found once per process; a /new or /resume inside the same Hermes keeps showing the first session until it restarts.
++export const HERMES_FIND = String.raw`
++if [ "$kind" = hermes ]; then
++python3 -I - "$pid" <<'PY'
++import glob, json, os, sqlite3, subprocess, sys
++def kids(p):
++    out = subprocess.run(["pgrep", "-P", p], capture_output=True, text=True).stdout.split()
++    return [k for c in out for k in [c, *kids(c)]]
++pids = {sys.argv[1], *kids(sys.argv[1])}
++root = os.path.expanduser("~/.hermes")
++try:
++    entries = json.load(open(os.path.join(root, "runtime", "active_sessions.json"))).get("entries", [])
++except Exception:
++    entries = []
++mine = sorted((e for e in entries if str(e.get("pid")) in pids), key=lambda e: e.get("updated_at") or 0)
++if not mine:
++    sys.exit()
++# The registry's id isn't the database's ("local-<hash of a request id>"): the session row that started
++# within a moment of the registry entry is it.
++at = float(mine[-1].get("started_at") or 0)
++best = None
++for db in [os.path.join(root, "state.db"), *glob.glob(os.path.join(root, "profiles", "*", "state.db"))]:
++    try:
++        con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
++        for sid, started in con.execute("select id, started_at from sessions where started_at between ? and ?", (at - 10, at + 10)).fetchall():
++            if best is None or abs(started - at) < best[0]:
++                best = (abs(started - at), db, sid, con.execute("select 1 from messages where session_id=? limit 1", (sid,)).fetchone())
++    except sqlite3.Error:
++        pass
++if best and best[3]:
++    print("%s#%s" % (best[1], best[2])); sys.exit()
++print("pending")
++PY
++exit 0
++fi
++`;
++
++// LOG's Hermes branch, for a "<db>#<session>" path (args: mode path ...), answering as LOG does for a file:
++//   tail <path> <from>          "T <size> <from> <end>" and the rows from id <from>
++//   page <path> <before> <want> "P <start> <end>" and about <want> rows before id <before> (start 0: the first)
++//   results <path> <id>...      each tool row's output, as {"payload":{"output":…}} (resultText reads it)
++// A row comes back as "<id>\tJ\t<json>", a tool's result as "<id>\tR\t <call id>".
++export const HERMES_LOG = String.raw`
++case "$f" in *'#'*)
++python3 -I - "$@" <<'PY'
++import json, sqlite3, sys
++mode, f, *rest = sys.argv[1:]
++db, sid = f.rsplit("#", 1)
++try:
++    con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
++    con.execute("select 1 from messages limit 1")
++except sqlite3.Error:
++    print("missing"); sys.exit()
++COLS = "id, role, content, tool_calls, tool_call_id, tool_name, timestamp, finish_reason, reasoning, display_kind"
++def rows(where, args, order="asc", limit=-1):
++    q = "select %s from messages where session_id=? and coalesce(active, 1)=1 and %s order by id %s limit ?" % (COLS, where, order)
++    return con.execute(q, (sid, *args, limit)).fetchall()
++def emit(r):
++    i, role, content, calls, call_id, tool, ts, finish, reasoning, kind = r
++    if role == "tool":
++        print("%d\tR\t %s" % (i, call_id or "")); return
++    try:
++        calls = json.loads(calls) if calls else None
++    except ValueError:
++        calls = None
++    rec = {"hermes": 1, "role": role, "content": (content or "")[:200000], "tool_calls": calls, "ts": ts,
++           "finish": finish, "thinking": bool(reasoning), "display_kind": kind}
++    print("%d\tJ\t%s" % (i, json.dumps(rec, ensure_ascii=False)))
++top = (con.execute("select max(id) from messages where session_id=?", (sid,)).fetchone()[0] or -1) + 1
++if mode == "tail":
++    o = int(rest[0])
++    got = rows("id >= ?", (o,))
++    print("T %d %d %d" % (max(top, o), o, got[-1][0] + 1 if got else o))
++    for r in got: emit(r)
++elif mode == "page":
++    before, want = int(rest[0]), int(rest[1])
++    e = min(before, top) if top > 0 else 0
++    got = rows("id < ?", (e,), "desc", want)[::-1]
++    a = got[0][0] if got else 0
++    if got and not con.execute("select 1 from messages where session_id=? and id < ? limit 1", (sid, a)).fetchone():
++        a = 0
++    print("P %d %d" % (a, e))
++    for r in got: emit(r)
++elif mode == "results":
++    for o in rest:
++        r = con.execute("select content from messages where id=?", (int(o),)).fetchone()
++        out = (r[0] if r else "") or ""
++        try:
++            j = json.loads(out)
++            if isinstance(j, dict) and "output" in j:
++                out = str(j.get("output") or j.get("error") or "")
++        except ValueError:
++            pass
++        sys.stdout.write("\x1e%s\n%s\n" % (o, json.dumps({"payload": {"output": out[:65536]}}, ensure_ascii=False)))
++PY
++exit 0;;
++esac
++`;
++
++const clip = (s, n = 80) => { s = String(s ?? "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
++const base = (p) => String(p ?? "").split("/").filter(Boolean).pop() ?? "";
++const first = (c) => clip(String(c ?? "").replace(/^(cd [^&;]+(&&|;)\s*)+/, "").split(/\s*(?:&&|\|\||;|\|)\s*/)[0], 48);
++
++// One Hermes tool call as a chat step: { kind, line, doing }.
++export function hermesStep(name, a = {}) {
++  const path = a.path ?? a.file_path ?? "";
++  if (name === "terminal") return { kind: "run", line: `Ran ${clip(a.command)}`, doing: `Running ${first(a.command)}` };
++  if (name === "execute_code") return { kind: "run", line: "Ran a script", doing: "Running a script" };
++  if (name === "read_file") return { kind: "read", line: `Read ${base(path)}`, doing: `Reading ${base(path)}` };
++  if (name === "write_file" || name === "patch") return { kind: "edit", line: `Edited ${base(path)}`, doing: `Editing ${base(path)}` };
++  if (name === "search_files" || name === "session_search") return { kind: "search", line: `Searched ${clip(a.pattern ?? a.query, 50)}`, doing: "Searching" };
++  if (name === "web_search") return { kind: "web", line: `Searched the web: ${clip(a.query, 60)}`, doing: "Searching the web" };
++  if (name === "web_extract" || name.startsWith("browser_")) return { kind: "web", line: `Read ${clip((a.urls ?? [a.url]).filter(Boolean).join(", "), 60) || "a page"}`, doing: "Reading the web" };
++  if (name === "delegate_task") return { kind: "agent", line: `Asked a helper: ${clip(a.goal ?? a.task ?? a.prompt, 70)}`, doing: "Starting a helper" };
++  if (name === "todo") return { kind: "plan", line: "Updated its plan", doing: "Planning" };
++  return { kind: "tool", line: `Used ${name}`, doing: `Using ${name}` };
++}
++
++// Hermes's own rows that aren't the conversation (notices to the agent, model switches, hidden turns).
++const QUIET = new Set(["hidden", "internal_notification", "async_delegation_complete", "process_complete", "model_switch"]);
++
++// One record from HERMES_LOG into the conversation (conv: core/chat-log.js Conversation; cleanUser: its words cleaner).
++export function hermesFeed(conv, l, off, cleanUser) {
++  const at = Math.round((l.ts ?? 0) * 1000);
++  if (QUIET.has(l.display_kind)) return;
++  if (l.role === "user") {
++    const u = l.content ? cleanUser(l.content) : null;
++    if (u) conv.user(`u${off}`, { ...u, at });
++    return;
++  }
++  if (l.role !== "assistant") return;
++  if (l.display_kind === "failed_turn") { conv.push({ kind: "error", id: `e${off}`, text: l.content || "The turn failed." }); conv.open.clear(); conv.doing = null; return; }
++  const said = conv.agentText(l.content ?? "");
++  if (said) conv.push({ kind: "agent", id: `a${off}`, text: said, at });
++  for (const c of Array.isArray(l.tool_calls) ? l.tool_calls : []) {
++    const id = String(c?.call_id ?? c?.id ?? `c${off}`);
++    const name = String(c?.function?.name ?? "tool");
++    let a = c?.function?.arguments;
++    try { a = typeof a === "string" ? JSON.parse(a) : a; } catch { a = {}; }
++    a = a && typeof a === "object" ? a : {};
++    if (name === "clarify") {
++      const text = [a.question, ...(Array.isArray(a.choices) ? a.choices.map((o) => `- ${o}`) : [])].filter(Boolean).join("\n");
++      if (text) conv.asked(id, { kind: "ask", id: `q${off}`, text });
++      conv.open.set(id, "Asking you something");
++      conv.doing = "Asking you something";
++      continue;
++    }
++    const st = hermesStep(name, a);
++    st.at = at || Date.now();
++    conv.step(id, off, st, name === "delegate_task" ? id : null);
++    if (name === "terminal") conv.sent(String(a.command ?? ""), off, at);
++  }
++  if (!said && !l.tool_calls?.length && l.thinking && !conv.open.size) conv.doing = "Thinking";
++  // A reply that ends the turn: nothing is running any more.
++  if (l.finish === "stop" && !l.tool_calls?.length) { conv.open.clear(); conv.waits.clear(); conv.waiting = false; conv.doing = null; }
++}
+diff --git a/mods/pane-chat/main.js b/mods/pane-chat/main.js
+index 31464bbb..3dd53f24 100644
+--- a/mods/pane-chat/main.js
++++ b/mods/pane-chat/main.js
+@@ -23,6 +23,7 @@ import { button as uiButton, segmented, TEXT, RADIUS, toast, plainError } from "
+ import { on as addonOn } from "./addons.js";
+ // "End Claude Code?" and its buttons: core/menus.js (the web app's header asks in the same words).
+ import { endAgent } from "./core/menus.js";
++import { isHermes } from "./core/hermes.js"; // local: Hermes
+ 
+ const CHAT = "chat";
+ const LABEL = "herdr.chat";
+@@ -41,7 +42,23 @@ function folder(cwd) {
+ }
+ 
+ // Chat reads Claude Code's and Codex's own session logs; other agents have no chat.
+-const chatty = (p) => Boolean(p?.terminal) && (["claude-code", "codex"].includes(p.app) || ["claude", "codex"].includes(p.program?.key));
++const chatty = (p) => Boolean(p?.terminal) && (["claude-code", "codex"].includes(p.app) || ["claude", "codex"].includes(p.program?.key) || hermesSeen.get(p.terminal)?.is === true);
++
++// local: Hermes reports nothing to Herdr and runs as python, so its pane shows as python: what runs is asked
++// of core (hc get: the foreground's argv), at most every 4 s per terminal, when the header draws.
++const hermesSeen = new Map(); // terminal -> { is, at }
++function lookHermes(p, cx) {
++  if (!p?.terminal || ["claude", "codex"].includes(p.program?.key)) return;
++  const was = hermesSeen.get(p.terminal);
++  if (was && Date.now() - was.at < 4000) return;
++  hermesSeen.set(p.terminal, { is: was?.is ?? false, at: Date.now() });
++  cx.spawn(async (cx) => {
++    let is = false;
++    try { is = isHermes(JSON.parse((await hc(["get", p.terminal, "--json"])).stdout)); } catch {}
++    hermesSeen.set(p.terminal, { is, at: Date.now() });
++    if (is !== (was?.is ?? false)) cx.notify();
++  });
++}
+ 
+ const chatPanes = () => new Set(panes().filter((p) => p.mod === CHAT).map((p) => p.pane));
+ // The chat pane showing a terminal, if one is open.
+@@ -225,6 +242,7 @@ export default class Pane extends View {
+     const pic = art !== null ? svg("mods/artifacts/artifacts.svg").size(14).flex_none().text_color(t.dim) : icon(p.program, 14, t.dim);
+     const st = p.status;
+     const pane = self.pane;
++    if (!chatMode) lookHermes(self, cx); // local: Hermes
+     const canSwitch = chatMode ? Boolean(entry) || Boolean(lazy) : chatty(self);
+     // An Assistant (chat or terminal): its Autopilot switch on the right, before the hover buttons (none while the
+     // Autopilot add-on is off).

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Save the Shepherdr checkout's `local` branch into shepherdr/patches (one file per commit on top of
+# upstream main) and record the upstream commit they sit on in shepherdr/BASE.
+# Run it after every change or rebase in the checkout, then commit this repo.
+set -euo pipefail
+KIT=$(cd "$(dirname "$0")/.." && pwd)
+SRC=${SHEPHERDR_DIR:-$HOME/Projects/shepherdr}
+cd "$SRC"
+[ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "export: $SRC has uncommitted changes; commit them on 'local' first" >&2; exit 1; }
+base=$(git merge-base origin/main local)
+rm -f "$KIT"/shepherdr/patches/*.patch
+# Hermes files and notes live in this repo, not in the checkout.
+git format-patch -q --zero-commit --no-signature -o "$KIT/shepherdr/patches" "$base..local" -- . ':!hermes' ':!LOCAL-PATCHES.md'
+printf '%s %s\n' "$base" "$(git describe --tags "$base" 2>/dev/null || echo untagged)" > "$KIT/shepherdr/BASE"
+echo "exported $(ls "$KIT"/shepherdr/patches | wc -l | tr -d ' ') patches on $(cat "$KIT/shepherdr/BASE")"

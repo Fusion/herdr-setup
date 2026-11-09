@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chris F Ravenscroft <chris@voilaweb.com>
+Date: Sun, 8 Nov 2026 23:03:20 -0800
+Subject: [PATCH 09/12] local: Stop sends Ctrl+C to Hermes (it ignores Esc)
+
+---
+ mods/chat/main.js | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/mods/chat/main.js b/mods/chat/main.js
+index 81c0fc46..f80baa62 100644
+--- a/mods/chat/main.js
++++ b/mods/chat/main.js
+@@ -1477,7 +1477,8 @@ export default class Chat extends View {
+   stop(cx) {
+     if (this.status() !== "working") return;
+     this.stopping = true;
+-    hc(["interrupt", this.addr]);
++    // local: Hermes ignores Esc (hc interrupt's key for it); Ctrl+C stops its turn.
++    hc(this.kind === "hermes" ? ["keys", this.addr, "ctrl+c"] : ["interrupt", this.addr]);
+     cx.notify();
+   }
+ 

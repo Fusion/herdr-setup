@@ -1,0 +1,169 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chris F Ravenscroft <chris@voilaweb.com>
+Date: Sun, 8 Nov 2026 23:00:30 -0800
+Subject: [PATCH 08/12] local: Hermes failed calls marked, clarify questions
+ shown, plugin reports blocked on questions/permissions
+
+---
+ core/chat-log.js              |  3 ++-
+ core/hermes.js                | 18 +++++++++++++++++-
+ mods/chat/core/chat-log.js    |  3 ++-
+ mods/chat/core/hermes.js      | 18 +++++++++++++++++-
+ mods/pane-chat/core/hermes.js | 18 +++++++++++++++++-
+ 5 files changed, 55 insertions(+), 5 deletions(-)
+
+diff --git a/core/chat-log.js b/core/chat-log.js
+index 2f7e8285..7635b9fb 100644
+--- a/core/chat-log.js
++++ b/core/chat-log.js
+@@ -1048,6 +1048,7 @@ export function summary(steps) {
+     say("tool", "used a tool", "used # tools"),
+   ].filter(Boolean);
+   const s = parts.join(", ");
+-  return s ? s[0].toUpperCase() + s.slice(1) : "Worked";
++  const bad = steps.filter((x) => x.failed).length; // local: Hermes marks its failed calls (core/hermes.js)
++  return (s ? s[0].toUpperCase() + s.slice(1) : "Worked") + (bad ? ` (${bad} failed)` : "");
+ }
+ 
+diff --git a/core/hermes.js b/core/hermes.js
+index a23c2b78..430c23f6 100644
+--- a/core/hermes.js
++++ b/core/hermes.js
+@@ -85,6 +85,14 @@ def rows(where, args, order="asc", limit=-1):
+ def emit(r):
+     i, role, content, calls, call_id, tool, ts, finish, reasoning, kind = r
+     if role == "tool":
++        # A call that failed (a non-zero exit, or an error): said before its result, for the step's mark.
++        try:
++            out = json.loads(content or "")
++        except ValueError:
++            out = None
++        if isinstance(out, dict) and (out.get("exit_code") not in (None, 0) or out.get("error")):
++            fail = {"hermes": 1, "role": "tool_failed", "call_id": call_id, "exit": out.get("exit_code")}
++            print("%d\tJ\t%s" % (i, json.dumps(fail)))
+         print("%d\tR\t %s" % (i, call_id or "")); return
+     try:
+         calls = json.loads(calls) if calls else None
+@@ -155,6 +163,11 @@ export function hermesFeed(conv, l, off, cleanUser) {
+     if (u) conv.user(`u${off}`, { ...u, at });
+     return;
+   }
++  if (l.role === "tool_failed") {
++    const s = conv.calls.get(String(l.call_id ?? ""));
++    if (s) { s.failed = true; s.line += l.exit != null ? ` (exit ${l.exit})` : " (failed)"; }
++    return;
++  }
+   if (l.role !== "assistant") return;
+   if (l.display_kind === "failed_turn") { conv.push({ kind: "error", id: `e${off}`, text: l.content || "The turn failed." }); conv.open.clear(); conv.doing = null; return; }
+   const said = conv.agentText(l.content ?? "");
+@@ -166,7 +179,10 @@ export function hermesFeed(conv, l, off, cleanUser) {
+     try { a = typeof a === "string" ? JSON.parse(a) : a; } catch { a = {}; }
+     a = a && typeof a === "object" ? a : {};
+     if (name === "clarify") {
+-      const text = [a.question, ...(Array.isArray(a.choices) ? a.choices.map((o) => `- ${o}`) : [])].filter(Boolean).join("\n");
++      // Hermes 0.23: { questions: [{ question, choices }] }; before: { question, choices }.
++      const qs = Array.isArray(a.questions) ? a.questions : [a];
++      const text = qs.map((q) => [q?.question, ...(Array.isArray(q?.choices) ? q.choices.map((o) => `- ${o}`) : [])].filter(Boolean).join("\n"))
++        .filter(Boolean).join("\n\n") + (qs.length ? "\n\nAnswer it in Hermes's terminal." : "");
+       if (text) conv.asked(id, { kind: "ask", id: `q${off}`, text });
+       conv.open.set(id, "Asking you something");
+       conv.doing = "Asking you something";
+diff --git a/mods/chat/core/chat-log.js b/mods/chat/core/chat-log.js
+index 2f7e8285..7635b9fb 100644
+--- a/mods/chat/core/chat-log.js
++++ b/mods/chat/core/chat-log.js
+@@ -1048,6 +1048,7 @@ export function summary(steps) {
+     say("tool", "used a tool", "used # tools"),
+   ].filter(Boolean);
+   const s = parts.join(", ");
+-  return s ? s[0].toUpperCase() + s.slice(1) : "Worked";
++  const bad = steps.filter((x) => x.failed).length; // local: Hermes marks its failed calls (core/hermes.js)
++  return (s ? s[0].toUpperCase() + s.slice(1) : "Worked") + (bad ? ` (${bad} failed)` : "");
+ }
+ 
+diff --git a/mods/chat/core/hermes.js b/mods/chat/core/hermes.js
+index a23c2b78..430c23f6 100644
+--- a/mods/chat/core/hermes.js
++++ b/mods/chat/core/hermes.js
+@@ -85,6 +85,14 @@ def rows(where, args, order="asc", limit=-1):
+ def emit(r):
+     i, role, content, calls, call_id, tool, ts, finish, reasoning, kind = r
+     if role == "tool":
++        # A call that failed (a non-zero exit, or an error): said before its result, for the step's mark.
++        try:
++            out = json.loads(content or "")
++        except ValueError:
++            out = None
++        if isinstance(out, dict) and (out.get("exit_code") not in (None, 0) or out.get("error")):
++            fail = {"hermes": 1, "role": "tool_failed", "call_id": call_id, "exit": out.get("exit_code")}
++            print("%d\tJ\t%s" % (i, json.dumps(fail)))
+         print("%d\tR\t %s" % (i, call_id or "")); return
+     try:
+         calls = json.loads(calls) if calls else None
+@@ -155,6 +163,11 @@ export function hermesFeed(conv, l, off, cleanUser) {
+     if (u) conv.user(`u${off}`, { ...u, at });
+     return;
+   }
++  if (l.role === "tool_failed") {
++    const s = conv.calls.get(String(l.call_id ?? ""));
++    if (s) { s.failed = true; s.line += l.exit != null ? ` (exit ${l.exit})` : " (failed)"; }
++    return;
++  }
+   if (l.role !== "assistant") return;
+   if (l.display_kind === "failed_turn") { conv.push({ kind: "error", id: `e${off}`, text: l.content || "The turn failed." }); conv.open.clear(); conv.doing = null; return; }
+   const said = conv.agentText(l.content ?? "");
+@@ -166,7 +179,10 @@ export function hermesFeed(conv, l, off, cleanUser) {
+     try { a = typeof a === "string" ? JSON.parse(a) : a; } catch { a = {}; }
+     a = a && typeof a === "object" ? a : {};
+     if (name === "clarify") {
+-      const text = [a.question, ...(Array.isArray(a.choices) ? a.choices.map((o) => `- ${o}`) : [])].filter(Boolean).join("\n");
++      // Hermes 0.23: { questions: [{ question, choices }] }; before: { question, choices }.
++      const qs = Array.isArray(a.questions) ? a.questions : [a];
++      const text = qs.map((q) => [q?.question, ...(Array.isArray(q?.choices) ? q.choices.map((o) => `- ${o}`) : [])].filter(Boolean).join("\n"))
++        .filter(Boolean).join("\n\n") + (qs.length ? "\n\nAnswer it in Hermes's terminal." : "");
+       if (text) conv.asked(id, { kind: "ask", id: `q${off}`, text });
+       conv.open.set(id, "Asking you something");
+       conv.doing = "Asking you something";
+diff --git a/mods/pane-chat/core/hermes.js b/mods/pane-chat/core/hermes.js
+index a23c2b78..430c23f6 100644
+--- a/mods/pane-chat/core/hermes.js
++++ b/mods/pane-chat/core/hermes.js
+@@ -85,6 +85,14 @@ def rows(where, args, order="asc", limit=-1):
+ def emit(r):
+     i, role, content, calls, call_id, tool, ts, finish, reasoning, kind = r
+     if role == "tool":
++        # A call that failed (a non-zero exit, or an error): said before its result, for the step's mark.
++        try:
++            out = json.loads(content or "")
++        except ValueError:
++            out = None
++        if isinstance(out, dict) and (out.get("exit_code") not in (None, 0) or out.get("error")):
++            fail = {"hermes": 1, "role": "tool_failed", "call_id": call_id, "exit": out.get("exit_code")}
++            print("%d\tJ\t%s" % (i, json.dumps(fail)))
+         print("%d\tR\t %s" % (i, call_id or "")); return
+     try:
+         calls = json.loads(calls) if calls else None
+@@ -155,6 +163,11 @@ export function hermesFeed(conv, l, off, cleanUser) {
+     if (u) conv.user(`u${off}`, { ...u, at });
+     return;
+   }
++  if (l.role === "tool_failed") {
++    const s = conv.calls.get(String(l.call_id ?? ""));
++    if (s) { s.failed = true; s.line += l.exit != null ? ` (exit ${l.exit})` : " (failed)"; }
++    return;
++  }
+   if (l.role !== "assistant") return;
+   if (l.display_kind === "failed_turn") { conv.push({ kind: "error", id: `e${off}`, text: l.content || "The turn failed." }); conv.open.clear(); conv.doing = null; return; }
+   const said = conv.agentText(l.content ?? "");
+@@ -166,7 +179,10 @@ export function hermesFeed(conv, l, off, cleanUser) {
+     try { a = typeof a === "string" ? JSON.parse(a) : a; } catch { a = {}; }
+     a = a && typeof a === "object" ? a : {};
+     if (name === "clarify") {
+-      const text = [a.question, ...(Array.isArray(a.choices) ? a.choices.map((o) => `- ${o}`) : [])].filter(Boolean).join("\n");
++      // Hermes 0.23: { questions: [{ question, choices }] }; before: { question, choices }.
++      const qs = Array.isArray(a.questions) ? a.questions : [a];
++      const text = qs.map((q) => [q?.question, ...(Array.isArray(q?.choices) ? q.choices.map((o) => `- ${o}`) : [])].filter(Boolean).join("\n"))
++        .filter(Boolean).join("\n\n") + (qs.length ? "\n\nAnswer it in Hermes's terminal." : "");
+       if (text) conv.asked(id, { kind: "ask", id: `q${off}`, text });
+       conv.open.set(id, "Asking you something");
+       conv.doing = "Asking you something";

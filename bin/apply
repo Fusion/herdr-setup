@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Put this setup on a machine, or bring it up to date with a new Shepherdr / Hermes:
+#   1. Shepherdr checkout ($SHEPHERDR_DIR, default ~/Projects/shepherdr; cloned if missing):
+#      no `local` branch yet -> made from upstream main with shepherdr/patches (git am -3);
+#      `local` exists        -> rebased onto the latest upstream main (git rebase).
+#      A conflict stops here: fix it, `git am --continue` / `git rebase --continue`, run apply again.
+#   2. Shepherdr's own checks and installer, then the two fixes its installer needs every time.
+#   3. The Hermes plugin and skill, when Hermes is installed.
+# Flags: --no-pull (don't fetch upstream), --no-install (stop after step 1).
+set -euo pipefail
+KIT=$(cd "$(dirname "$0")/.." && pwd)
+SRC=${SHEPHERDR_DIR:-$HOME/Projects/shepherdr}
+UPSTREAM=https://github.com/eliasstravik/shepherdr.git
+CFG=$HOME/.config/herdr-app
+pull=1 install=1
+for a in "$@"; do case $a in --no-pull) pull=0;; --no-install) install=0;; *) echo "apply: unknown flag $a" >&2; exit 2;; esac; done
+say() { printf '\n== %s\n' "$*"; }
+
+# ---- 1. Shepherdr branch `local`
+[ -d "$SRC/.git" ] || { say "cloning Shepherdr into $SRC"; git clone -q "$UPSTREAM" "$SRC"; }
+cd "$SRC"
+for d in rebase-merge rebase-apply; do [ -d "$(git rev-parse --git-path $d)" ] && { echo "apply: a rebase/am is in progress in $SRC: finish it (git status), then run apply again" >&2; exit 1; }; done
+[ $pull = 1 ] && { say "fetching upstream"; git fetch -q origin; }
+if git rev-parse -q --verify local >/dev/null; then
+  git checkout -q local
+  say "rebasing local onto origin/main ($(git describe --tags origin/main 2>/dev/null))"
+  git rebase origin/main || { echo "apply: conflicts. Fix them, git add, git rebase --continue, then run apply again (and bin/export)." >&2; exit 1; }
+else
+  say "making branch local from origin/main + $(ls "$KIT"/shepherdr/patches/*.patch | wc -l | tr -d ' ') patches (made on $(cut -d' ' -f2 "$KIT/shepherdr/BASE"))"
+  git checkout -q -b local origin/main
+  git am -q -3 "$KIT"/shepherdr/patches/*.patch || { echo "apply: a patch didn't fit. Fix the files, git add, git am --continue, then run apply again (and bin/export)." >&2; exit 1; }
+fi
+[ $install = 1 ] || exit 0
+
+# ---- 2. Shepherdr checks, install and the installer's two side effects
+say "checks"
+python3 bin/sync-shared
+bun test test/hermes.test.js
+say "installing Shepherdr (keeps your keys)"
+./install.sh --keys keep --yes
+# The installer adds ctrl-k for jump to layout:shepherdr; only cmd-k is wanted.
+python3 - "$CFG/keys.json" <<'EOF'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+if d.get("layout:shepherdr", {}).pop("ctrl-k", None) is not None:
+    json.dump(d, open(p, "w"), indent=2); print("removed ctrl-k from layout:shepherdr")
+EOF
+# A tabs-tasks you edited by hand gets the new version beside it as main.js.new: the branch's wins.
+n=$CFG/mods/tabs-tasks/main.js.new
+[ -f "$n" ] && { cp "$CFG/mods/tabs-tasks/main.js" "$CFG/mods/tabs-tasks/main.js.bak"; cp "$n" "$CFG/mods/tabs-tasks/main.js"; rm -f "$n"; echo "tabs-tasks: took the branch version (old one in main.js.bak)"; }
+
+# ---- 3. Hermes plugin and skill
+if command -v hermes >/dev/null && [ -d "$HOME/.hermes" ]; then
+  say "Hermes plugin and skill"
+  mkdir -p "$HOME/.hermes/plugins" "$HOME/.hermes/skills/autonomous-ai-agents"
+  cp -R "$KIT/hermes/plugins/herdr-core-status" "$HOME/.hermes/plugins/"
+  cp -R "$KIT/hermes/skills/herdr-terminals" "$HOME/.hermes/skills/autonomous-ai-agents/"
+  hermes plugins disable herdr-core-status >/dev/null 2>&1 || true
+  hermes plugins enable herdr-core-status
+else
+  say "Hermes not installed: skipped its plugin and skill"
+fi
+say "done"

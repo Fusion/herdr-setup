@@ -1,0 +1,3 @@
+name: herdr-core-status
+version: "1.0"
+description: Report Hermes working/blocked/idle to Herdr core terminals (OSC 7501), for Shepherdr
