@@ -4,6 +4,9 @@ My changes to Shepherdr (a layout for the Herdr app) and the Hermes pieces that 
 Chat|Terminal agent in it. This repo holds only my changes. Shepherdr, Herdr and Hermes are installed
 the usual way.
 
+Built on [Shepherdr](https://github.com/eliasstravik/shepherdr) by Elias Stravik (MIT); not affiliated
+with Shepherdr, Herdr or Hermes. MIT licensed, see LICENSE.
+
 ```
 bin/apply                     set up a machine, or update to the latest Shepherdr (see below)
 bin/export                    save the Shepherdr checkout's `local` branch back into shepherdr/patches
