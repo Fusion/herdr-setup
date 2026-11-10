@@ -122,4 +122,7 @@ def register(ctx):
     ctx.register_hook("on_human_input_request", lambda **kw: _say("blocked", "question" if kw.get("kind") == "clarify" else "permission",
                                                                   "Asking you something" if kw.get("kind") == "clarify" else "Waiting for your approval", kw))
     on("on_human_input_resolved", "working", msg="Thinking")
-    on("on_session_end", "idle")
+    # Fires at every turn's end with how it went: a failed turn (not one you stopped) is an error,
+    # which Herdr shows as needing you and the sidebar as a red dot.
+    ctx.register_hook("on_session_end", lambda **kw: _say("error", None, "The turn failed", kw)
+                      if kw.get("failed") and not kw.get("interrupted") else _say("idle", None, None, kw))

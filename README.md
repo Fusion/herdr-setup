@@ -51,7 +51,7 @@ Hermes part: edit under `hermes/` here, then `bin/apply --no-pull`.
 | 3 | Sidebar row shows a breathing dot while any agent in the space works | `mods/spaces-chat/main.js` | Upstream only shows spaces that need you |
 | 3b | Sidebar row shows a green dot when work finished while you weren't looking, red when an agent reported an error you haven't looked at | `mods/spaces-chat/main.js` (`outcome`) | Same; green follows Herdr's "done", red the core status `error` |
 | 4 | Hermes in the Chat view: history, tool rows, failed steps, questions answered from the card, Stop = Ctrl+C, the chat ends when Hermes exits | new `core/hermes.js` (copied into `mods/chat/core`, `mods/pane-chat/core` by `bin/sync-shared`, listed in `lib/COPIES`); hooks in `core/chat-log.js`, `core/chat-reader.js`, `mods/chat/main.js`, `mods/pane-chat/main.js`; `test/hermes.test.js` | Reads `~/.hermes/state.db`; the session comes from `~/.hermes/runtime/active_sessions.json` |
-| 5 | Hermes plugin `herdr-core-status` | `hermes/plugins/` here | Hermes 0.23 runs turns in its gateway, so the plugin writes Herdr's status escape (OSC 7501, `msg` base64) to the CLI's tty |
+| 5 | Hermes plugin `herdr-core-status`: working / waiting on you / idle, and `error` when a turn fails (not when you stop it) | `hermes/plugins/` here | Hermes 0.23 runs turns in its gateway, so the plugin writes Herdr's status escape (OSC 7501, `msg` base64) to the CLI's tty |
 | 6 | Hermes skill `herdr-terminals` | `hermes/skills/` here | Teaches Hermes `hc`, so its chat shows the messages it sends other agents |
 
 Post-install fixes `bin/apply` makes every time: removes `ctrl-k` (jump) from `layout:shepherdr` in
