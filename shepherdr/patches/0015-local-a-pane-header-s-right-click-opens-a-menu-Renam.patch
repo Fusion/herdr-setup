@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chris F Ravenscroft <chris@voilaweb.com>
+Date: Tue, 10 Nov 2026 10:19:11 -0800
+Subject: [PATCH 15/15] =?UTF-8?q?local:=20a=20pane=20header's=20right-clic?=
+ =?UTF-8?q?k=20opens=20a=20menu=20(Rename=E2=80=A6)=20like=20a=20tab's?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ mods/menu-tasks/main.js | 6 ++++++
+ mods/pane-chat/main.js  | 6 +++---
+ 2 files changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/mods/menu-tasks/main.js b/mods/menu-tasks/main.js
+index 63c186c0..50dc68b9 100644
+--- a/mods/menu-tasks/main.js
++++ b/mods/menu-tasks/main.js
+@@ -70,6 +70,9 @@ function items(p, git, known) {
+       return tabMenu({ assistant: coordTab, switchable: Boolean(agent && known?.some((a) => a.installed)), restartable: Boolean(restartable) })
+         .filter((it) => !it.sep).map((it) => [it.label, ...does[it.id]]);
+     }
++    // local: a pane header's menu (mods/pane-chat): Rename…, the name kept as a core label on its terminal.
++    case "pane-head":
++      return [["Rename\u2026", "pane.rename", tg]];
+     case "space":
+       return [
+         ["Rename\u2026", "space.rename", { id: tg.id }],
+@@ -150,6 +153,9 @@ export default class Menu extends View {
+     // Our dialogs (the app's one footer), not Herdr's prompt and confirm.
+     else if (it[1] === "tab.rename") renameTab(spaces().flatMap((s) => s.tabs).find((x) => x.id === it[2].id));
+     else if (it[1] === "space.rename") renameSpace(it[2].id);
++    // local: Rename pane: the tab's Rename dialog, setting the terminal's label (empty: the program's name again).
++    else if (it[1] === "pane.rename") openOverlay({ mod: "prompt-chat", kind: "dialog", width: 400, height: 196, props: { title: "Rename pane",
++      value: it[2].name ?? "", placeholder: it[2].placeholder ?? "", hint: "Empty: back to the program's name", setLabel: { terminal: it[2].terminal, key: it[2].key } } });
+     else if (it[1] === "space.close") closeSpace(it[2].id);
+     else if (it[1] === "worktree") openOverlay({ mod: "worktree", kind: "dialog", ...(it[2].action === "open" ? { width: 560, height: 480 } : { width: 440, height: 260 }), props: it[2] });
+     else run(it[1], it[2]);
+diff --git a/mods/pane-chat/main.js b/mods/pane-chat/main.js
+index 85ac6a45..f9c46de9 100644
+--- a/mods/pane-chat/main.js
++++ b/mods/pane-chat/main.js
+@@ -266,10 +266,10 @@ export default class Pane extends View {
+       .on_hover((hovered, cx) => { this.hovered = hovered; if (!hovered) this.ending = false; cx.notify(); })
+       .on_size_change((size, cx) => { if (Math.round(size.width) !== this.width) { this.width = Math.round(size.width); cx.notify(); } })
+       .on_click(() => run("pane.focus", { pane }))
+-      // local: right-click renames the pane (empty: back to the program's name).
++      // local: right-click: a menu as a tab's (mods/menu-tasks "pane-head"), Rename… (empty: back to the program's name).
+       .when(Boolean(agent ?? self.terminal) && !art, (el) => el.on_mouse_down("right", (_e, cx) => { cx.stop_propagation();
+-        openOverlay({ mod: "prompt-chat", kind: "dialog", width: 400, height: 196, props: { title: "Rename pane", value: named ?? "",
+-          placeholder: name, hint: "Empty: back to the program's name", setLabel: { terminal: agent ?? self.terminal, key: NAME } } }); }))
++        openOverlay({ mod: "menu-tasks", kind: "popup", width: 236, height: 19 + 32,
++          props: { tab: "pane-head", target: { terminal: agent ?? self.terminal, key: NAME, name: named, placeholder: name } } }); }))
+       .when(Boolean(pic), (el) => el.child(pic))
+       .child(div().flex_none().max_w(260).min_w(0).truncate().font_medium().text_color(t.foreground).child(shown)) // local: shown
+       // The folder gives way first; the switch keeps its width; the gap after pushes the rest right.
