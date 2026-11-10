@@ -12,6 +12,8 @@ bin/apply                     set up a machine, or update to the latest Shepherd
 bin/export                    save the Shepherdr checkout's `local` branch back into shepherdr/patches
 shepherdr/patches/*.patch     my commits on top of upstream Shepherdr (git format-patch)
 shepherdr/BASE                the upstream commit/version they were last made on
+herdr/mods/theeyes            my mod: robot eyes whose mood follows the focused tab's agent (or ~/Tmp/the-muse/data/avatar.json)
+herdr/layouts/shepherdr-eyes.json  Shepherdr with the eyes under the sidebar (added if missing, never overwritten)
 hermes/plugins/herdr-core-status   Hermes plugin: tells Herdr when Hermes works, waits on you, is idle
 hermes/skills/herdr-terminals      Hermes skill: hc send/read/run, to talk to other agents
 ```
@@ -41,6 +43,8 @@ shows every line I touched in an upstream file; the table below says why), `git 
 Shepherdr part: edit and commit on branch `local` in the checkout (start the message with `local:`
 and mark touched upstream lines with a `local:` comment), then `bin/export` and commit here.
 Hermes part: edit under `hermes/` here, then `bin/apply --no-pull`.
+My own mods: edit in `~/.config/herdr-app/mods/<mod>`, copy `main.js`/`mod.json` back into `herdr/mods/<mod>`
+and commit (`bin/apply` copies this repo's version over the installed one).
 
 ## What the patches do
 

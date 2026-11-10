@@ -55,6 +55,11 @@ EOF
 n=$CFG/mods/tabs-tasks/main.js.new
 [ -f "$n" ] && { cp "$CFG/mods/tabs-tasks/main.js" "$CFG/mods/tabs-tasks/main.js.bak"; cp "$n" "$CFG/mods/tabs-tasks/main.js"; rm -f "$n"; echo "tabs-tasks: took the branch version (old one in main.js.bak)"; }
 
+# ---- 2b. My own mods (this repo's copy wins) and layouts (only added, never overwritten: Herdr saves sizes in them)
+say "my mods and layouts"
+for m in "$KIT"/herdr/mods/*/; do mkdir -p "$CFG/mods/$(basename "$m")"; cp "$m"* "$CFG/mods/$(basename "$m")/"; herdr-app check "$CFG/mods/$(basename "$m")"; done
+mkdir -p "$CFG/layouts"; cp -n "$KIT"/herdr/layouts/*.json "$CFG/layouts/" || true
+
 # ---- 3. Hermes plugin and skill
 if command -v hermes >/dev/null && [ -d "$HOME/.hermes" ]; then
   say "Hermes plugin and skill"
