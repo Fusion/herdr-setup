@@ -1,0 +1,211 @@
+diff -ru a/gh.js b/gh.js
+--- a/gh.js	2026-11-10 13:29:07
++++ b/gh.js	2026-11-10 13:29:07
+@@ -31,10 +31,14 @@
+ }
+ 
+ // exec() resolves with a non-zero code instead of rejecting; turn that into an error.
+-async function gh(args, { cwd, on } = {}) {
++// `account`: run as that gh login instead of the active one (exec takes no env, so a shell
++// sets GH_TOKEN from `gh auth token` for this one call; the token never leaves it).
++async function gh(args, { cwd, on, account = null, host = "github.com" } = {}) {
+   let result;
+   try {
+-    result = await exec("gh", args, { cwd, on });
++    result = account
++      ? await exec("sh", ["-c", 'GH_TOKEN="$(gh auth token -h "$1" -u "$2")" || exit 4; shift 2; GH_TOKEN="$GH_TOKEN" exec gh "$@"', "gh", host, account, ...args], { cwd, on })
++      : await exec("gh", args, { cwd, on });
+   } catch (e) {
+     throw new GhError(`Could not start gh: ${e}. Install it from https://cli.github.com and run gh auth login.`);
+   }
+@@ -56,14 +60,41 @@
+   return args;
+ }
+ 
++/** The logins gh holds, the active one first: [{ host, login, active }]. */
++async function accounts(on) {
++  const r = await exec("gh", ["auth", "status"], { on }).catch(() => null);
++  const out = [], text = `${r?.stdout ?? ""}\n${r?.stderr ?? ""}`;
++  let last = null;
++  for (const line of text.split(/\r?\n/)) {
++    const m = /Logged in to (\S+) account (\S+)/.exec(line);
++    if (m) { last = { host: m[1], login: m[2], active: false }; out.push(last); continue; }
++    if (last && /Active account: true/.test(line)) last.active = true;
++  }
++  return out.sort((a, b) => Number(b.active) - Number(a.active));
++}
++
++// Repositories gh's active login can't see (an organization reached by another login)
++// are tried with each other login; the first that can see it is kept for that repo.
++const NOT_VISIBLE = /Could not resolve to a Repository|HTTP 404|Not Found/i;
++
+ /** Finds the GitHub repository of a folder with `gh repo view`. */
+ export async function resolveRepo({ cwd, on, override }) {
+   const args = ["repo", "view", ...(override ? [override] : []), "--json", "nameWithOwner,url,isPrivate,defaultBranchRef"];
+-  const out = await gh(args, { cwd, on });
+-  const data = JSON.parse(out);
+-  const [owner, name] = data.nameWithOwner.split("/");
+-  const host = new URL(data.url).host;
+-  return { host, owner, name, slug: data.nameWithOwner, isPrivate: Boolean(data.isPrivate), defaultBranch: data.defaultBranchRef?.name || "" };
++  const parse = (out, account) => {
++    const data = JSON.parse(out);
++    const [owner, name] = data.nameWithOwner.split("/");
++    const host = new URL(data.url).host;
++    return { host, owner, name, slug: data.nameWithOwner, isPrivate: Boolean(data.isPrivate), defaultBranch: data.defaultBranchRef?.name || "", account };
++  };
++  try {
++    return parse(await gh(args, { cwd, on }), null);
++  } catch (first) {
++    if (!NOT_VISIBLE.test(first.message)) throw first;
++    for (const a of (await accounts(on)).filter((x) => !x.active)) {
++      try { return parse(await gh(args, { cwd, on, account: a.login, host: a.host }), a.login); } catch (_) {}
++    }
++    throw new GhError(first.message, { status: 404, path: "repo view" });
++  }
+ }
+ 
+ export class Gh {
+@@ -73,6 +104,8 @@
+     this.on = on;
+   }
+ 
++  opts() { return { cwd: this.cwd, on: this.on, account: this.repo.account ?? null, host: this.repo.host }; }
++
+   rp(suffix = "") { return `repos/${this.repo.owner}/${this.repo.name}${suffix}`; }
+ 
+   async json(path, { method, paginate = false } = {}) {
+@@ -80,7 +113,7 @@
+     if (method) args.push("--method", method);
+     if (paginate) args.push("--paginate", "--slurp");
+     args.push("--header", "Accept: application/vnd.github+json", path);
+-    const out = (await gh(args, { cwd: this.cwd, on: this.on })).trim();
++    const out = (await gh(args, this.opts())).trim();
+     if (!out) return null;
+     try { return JSON.parse(out); } catch { throw new GhError(`GitHub returned invalid JSON for ${path}`, { path }); }
+   }
+@@ -94,7 +127,7 @@
+   async rawFile(path, ref) {
+     const args = ["api", "--hostname", this.repo.host, "--header", "Accept: application/vnd.github.raw+json",
+       this.rp(`/contents/${String(path).split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(ref)}`)];
+-    const text = await gh(args, { cwd: this.cwd, on: this.on });
++    const text = await gh(args, this.opts());
+     if (!text.trim()) throw new GhError(`${path} is empty on ${ref}`);
+     return text;
+   }
+@@ -111,7 +144,7 @@
+    */
+   async dispatch(workflowId, ref, inputs) {
+     const args = dispatchArgs(this.repo, workflowId, ref, inputs);
+-    const out = (await gh(args, { cwd: this.cwd, on: this.on })).trim();
++    const out = (await gh(args, this.opts())).trim();
+     if (!out) return { runId: null };
+     try { const data = JSON.parse(out); return { runId: data.workflow_run_id ?? null }; } catch { return { runId: null }; }
+   }
+@@ -132,11 +165,11 @@
+   async latestRuns(workflowId, perPage = 5) { return (await this.json(this.rp(`/actions/workflows/${workflowId}/runs?per_page=${perPage}`))).workflow_runs || []; }
+   async cancelRun(id) { await this.json(this.rp(`/actions/runs/${id}/cancel`), { method: "POST" }); }
+   async rerunRun(id) { await this.json(this.rp(`/actions/runs/${id}/rerun`), { method: "POST" }); }
+-  async openRunWeb(id) { await gh(["run", "view", String(id), "--web", "-R", `${this.repo.host}/${this.repo.slug}`], { cwd: this.cwd, on: this.on }); }
++  async openRunWeb(id) { await gh(["run", "view", String(id), "--web", "-R", `${this.repo.host}/${this.repo.slug}`], this.opts()); }
+ 
+   /** Downloads one artifact into `dir`. exec() allows 30 s, so very large artifacts can time out. */
+   async downloadArtifact(runId, name, dir) {
+-    await gh(["run", "download", String(runId), "--name", name, "--dir", dir, "-R", `${this.repo.host}/${this.repo.slug}`], { cwd: this.cwd, on: this.on });
++    await gh(["run", "download", String(runId), "--name", name, "--dir", dir, "-R", `${this.repo.host}/${this.repo.slug}`], this.opts());
+   }
+ }
+ 
+diff -ru a/main.js b/main.js
+--- a/main.js	2026-11-10 13:29:07
++++ b/main.js	2026-11-10 13:29:07
+@@ -72,6 +72,15 @@
+   return { cwd, on, branch };
+ }
+ 
++// gh's and git's own wording for the common "nothing to show here" cases, said plainly.
++function friendlyError(text) {
++  if (/not a git repository/i.test(text)) return { title: "This folder is not a git repository.", hint: "Focus a terminal inside a repository that has a GitHub remote, and CI runs follows it." };
++  if (/no git remotes|none of the git remotes|could not determine.*repo/i.test(text)) return { title: "This repository has no GitHub remote.", hint: "Add one with git remote add origin <url>, or focus a terminal in another repository." };
++  if (/Could not resolve to a Repository/i.test(text)) return { title: "None of your GitHub logins can see this repository.", hint: "Log in with an account that has access: gh auth login, then press ⟳." };
++  if (/not logged in|gh auth login/i.test(text) && !/Could not start gh/.test(text)) return { title: "GitHub CLI is not logged in.", hint: "Run gh auth login in a terminal, then press ⟳." };
++  return null;
++}
++
+ async function dirExists(dir, on) {
+   try {
+     const r = isWin()
+@@ -141,10 +150,10 @@
+ 
+   ensureContext(cx) {
+     const { cwd, on, branch } = location();
+-    if (branch) this.branch = branch;
+     const key = `${on ?? ""}|${cwd ?? ""}`;
+-    if (key === this.key) return;
++    if (key === this.key) { if (branch) this.branch = branch; return; }
+     this.key = key;
++    this.branch = branch;
+     this.resolve(cx, cwd, on);
+   }
+ 
+@@ -168,8 +177,14 @@
+           this.gh.cwd = cwd; this.gh.on = on;
+         }
+       } catch (e) {
+-        // A pane outside a repository keeps showing the repository already loaded.
+-        if (!this.repo) this.error = e;
++        // The focused folder has no GitHub repository: say so for this folder rather than
++        // keep showing the last repository's runs (which read as this tab's CI). A newer
++        // context waiting in pending replaces this at once.
++        if (!this.pending) {
++          this.repo = null; this.gh = null; this.root = null;
++          this.reset();
++          this.error = e;
++        }
+       } finally {
+         this.resolving = false;
+         const next = this.pending; this.pending = null;
+@@ -417,7 +432,7 @@
+     const artifactCount = this.art.groups.reduce((sum, g) => sum + g.artifacts.length, 0);
+     return v_flex().flex_none()
+       .child(h_flex().h(38).flex_none().px(12).gap(8).items_center()
+-        .child(div().font_semibold().flex_none().child("CI Dash"))
++        .child(div().font_semibold().flex_none().child("CI runs"))
+         .when(Boolean(this.repo && this.gh?.on), (e) => e.child(machineChip(t, this.gh.on)))
+         .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(this.repo ? this.repo.slug : ""))
+         .when(onArtifacts, (e) => e.child(this.button("folder", "↗", (cx) => this.openArtifactsFolder(cx), t, { disabled: !this.root })))
+@@ -439,7 +454,8 @@
+ 
+   errorView(t, error) {
+     const text = error?.message || String(error);
+-    return this.message(t, text, errorHint(error));
++    const friendly = friendlyError(text);
++    return friendly ? this.message(t, friendly.title, friendly.hint) : this.message(t, text, errorHint(error));
+   }
+ 
+   /** Title and #number on top, then pills: branch, status, duration, trigger. */
+@@ -483,13 +499,9 @@
+       }
+     }
+ 
+-    const rows = [];
+-    for (const g of RUN_GROUPS) {
+-      const inGroup = shown.filter((r) => groupOf(r) === g.id);
+-      if (!inGroup.length) continue;
+-      rows.push(section(t, g.label, inGroup.length, g.color(t)));
+-      for (const r of inGroup) rows.push(this.runRow(r, t));
+-    }
++    // One list, newest first (the filter chips above narrow it by state).
++    const when = (r) => Date.parse(r.run_started_at || r.created_at) || 0;
++    const rows = [...shown].sort((x, y) => when(y) - when(x) || (y.id ?? 0) - (x.id ?? 0)).map((r) => this.runRow(r, t));
+ 
+     return v_flex().flex_1().min_h(0)
+       .child(v_flex().flex_none().px(12).pt(10).pb(2).gap(8)
+@@ -651,7 +663,7 @@
+     else if (this.tab === "dispatch") body = this.dsp.view(t);
+     else body = this.detail ? this.detailView(t) : this.runsView(t);
+ 
+-    return dialogKeys(v_flex().id("ci-dash").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13), this.keys)
++    return dialogKeys(v_flex().id("ci-dash").size_full().min_h(0).rounded(this.props.panel ? 0 : 10).overflow_hidden().bg(t.background).when(!this.props.panel, (el) => el.border_1().border_color(t.border)).when(Boolean(this.props.panel), (el) => el.border_t(1).border_b(1).border_color(t.border)).text_color(t.foreground).text_size(13), this.keys)
+       .child(this.header(t, cx))
+       .child(body)
+       .when(Boolean(this.note), (e) => e.child(div().flex_none().px(12).py(6).border_t(1).border_color(t.border).text_size(11).text_color(t.blocked).truncate().child(this.note)));

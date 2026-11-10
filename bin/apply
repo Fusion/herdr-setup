@@ -12,7 +12,7 @@ set -euo pipefail
 KIT=$(cd "$(dirname "$0")/.." && pwd)
 SRC=${SHEPHERDR_DIR:-$HOME/Projects/shepherdr}
 UPSTREAM=https://github.com/eliasstravik/shepherdr.git
-CFG=$HOME/.config/herdr-app
+CFG=${HERDR_APP_HOME:-$HOME/.config/herdr-app}
 pull=1 install=1 rebase=1
 for a in "$@"; do case $a in --no-pull) pull=0;; --no-install) install=0;; --no-rebase) rebase=0;; *) echo "apply: unknown flag $a" >&2; exit 2;; esac; done
 say() { printf '\n== %s\n' "$*"; }
@@ -59,6 +59,38 @@ n=$CFG/mods/tabs-tasks/main.js.new
 say "my mods and layouts"
 for m in "$KIT"/herdr/mods/*/; do mkdir -p "$CFG/mods/$(basename "$m")"; cp "$m"* "$CFG/mods/$(basename "$m")/"; herdr-app check "$CFG/mods/$(basename "$m")"; done
 mkdir -p "$CFG/layouts"; cp -n "$KIT"/herdr/layouts/*.json "$CFG/layouts/" || true
+
+# ---- 2c. Other people's mods (herdr/third-party/mods.txt): only the missing ones, at the pinned version, plus my patch
+grep -v '^#' "$KIT/herdr/third-party/mods.txt" | while read -r name url ref dir patch helper; do
+  [ -n "$name" ] || continue
+  [ -d "$CFG/mods/$name" ] && { echo "$name: installed, left as is"; continue; }
+  say "installing $name ($ref)"
+  src="$KIT/.cache/$name"
+  [ -d "$src/.git" ] || { git init -q "$src"; git -C "$src" remote add origin "$url"; }
+  git -C "$src" fetch -q --depth 1 origin "$ref" && git -C "$src" checkout -q --detach FETCH_HEAD
+  cp -R "$src/$dir" "$CFG/mods/$name"
+  [ "$patch" != "-" ] && patch -s -p1 -d "$CFG/mods/$name" -i "$KIT/herdr/third-party/$patch"
+  if [ "$helper" != "-" ]; then
+    # Its release's prebuilt helper for this machine, checked against the release's SHA256SUMS; none: skipped.
+    case "$(uname -sm)" in "Darwin arm64") t=aarch64-apple-darwin;; "Darwin x86_64") t=x86_64-apple-darwin;;
+      "Linux aarch64") t=aarch64-unknown-linux-gnu;; "Linux x86_64") t=x86_64-unknown-linux-gnu;; *) t=;; esac
+    rel="${url%.git}/releases/download/$ref" tmp=$(mktemp -d)
+    if [ -n "$t" ] && curl -fsSL -o "$tmp/$helper-$t" "$rel/$helper-$t" && curl -fsSL -o "$tmp/SHA256SUMS" "$rel/SHA256SUMS" \
+       && (cd "$tmp" && grep " $helper-$t\$" SHA256SUMS | shasum -a 256 -c -); then
+      mkdir -p "$CFG/mods/$name/bin"; install -m 755 "$tmp/$helper-$t" "$CFG/mods/$name/bin/$helper"
+    else echo "$name: no checked helper for this machine, skipped"; fi
+  fi
+  herdr-app check "$CFG/mods/$name"
+done
+# ⌘⌥G opens Git Grapher beside the focused pane (added only when the key is free).
+python3 - "$CFG/keys.json" <<'EOF'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+if "cmd-alt-g" not in d.setdefault("global", {}):
+    d["global"]["cmd-alt-g"] = {"command": "pane.split", "args": {"direction": "right", "mod": "git-grapher"}}
+    json.dump(d, open(p, "w"), indent=2); print("added cmd-alt-g: Git Grapher beside the focused pane")
+EOF
 
 # ---- 3. Hermes plugin and skill
 if command -v hermes >/dev/null && [ -d "$HOME/.hermes" ]; then
