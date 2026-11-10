@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Chris F Ravenscroft <chris@voilaweb.com>
 Date: Sun, 8 Nov 2026 21:32:52 -0800
-Subject: [PATCH 06/12] local: working dot also when a done agent shares the
+Subject: [PATCH 06/13] local: working dot also when a done agent shares the
  space; Hermes herdr-core-status plugin
 
 ---

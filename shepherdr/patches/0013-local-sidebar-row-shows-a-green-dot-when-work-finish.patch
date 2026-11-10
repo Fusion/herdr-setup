@@ -1,0 +1,60 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chris F Ravenscroft <chris@voilaweb.com>
+Date: Mon, 9 Nov 2026 16:57:39 -0800
+Subject: [PATCH 13/13] local: sidebar row shows a green dot when work finished
+ unseen, red when an agent reported an error
+
+---
+ mods/spaces-chat/main.js | 25 +++++++++++++++++++++++--
+ 1 file changed, 23 insertions(+), 2 deletions(-)
+
+diff --git a/mods/spaces-chat/main.js b/mods/spaces-chat/main.js
+index b2acb168..797b5e2c 100644
+--- a/mods/spaces-chat/main.js
++++ b/mods/spaces-chat/main.js
+@@ -13,8 +13,8 @@
+ 
+ import { View, div, svg } from "gpui-kit";
+ import { v_flex, h_flex } from "gpui-base";
+-import { machines, run, props, exec, hc, home, theme, shared, setShared, watchFolder, window, layout, nextCommand, readTextFile } from "herdr";
+-import { panes, spaces as allSpaces, inRender, agents } from "./live.js";
++import { machines, run, props, exec, hc, home, theme, shared, setShared, watchFolder, window, layout, nextCommand, readTextFile, focused } from "herdr"; // local: focused
++import { panes, spaces as allSpaces, inRender, agents, terminals } from "./live.js"; // local: terminals
+ import { countsByTab, readyByTab } from "./inbox.js";
+ import { spacesWithChats, chatAgents } from "./parked.js";
+ import { sectionsOf, sectionOf, iconOf, placeSpace, foldSection, prune, data, pin, foldPinned, machineLook, restoreSection } from "./sections.js";
+@@ -78,6 +78,25 @@ const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b
+ 
+ // local: some agent in the space works now (its status shows only the most urgent: a done agent hides a working one).
+ const working = (w) => w.status === "working" || [...agents(), ...chatAgents()].some((a) => a.space === w.id && a.status === "working");
++// local: how the space's finished work ended, until you look: "error" (an agent reported an error you
++// haven't looked at since), "done" (finished while you weren't looking, Herdr's done), else null.
++const errSeen = new Map(); // address -> status_ms of the error last looked at (memory only)
++const outcome = (w) => {
++  const tabs = new Set((w.tabs ?? []).map((t) => t.id));
++  const ps = panes(), now = focused()?.pane;
++  // An agent's pane: its own, or the chat pane it is parked behind (herdr.chat).
++  const paneOf = (k) => ps.find((p) => p.terminal === k.address) ?? ps.find((p) => p.pane === k.labels?.["herdr.chat"]);
++  let error = false;
++  for (const k of terminals()) {
++    if (k.status !== "error") continue;
++    const p = paneOf(k);
++    if (!p || !tabs.has(p.tab)) continue;
++    if (p.pane === now) errSeen.set(k.address, k.status_ms);
++    if (errSeen.get(k.address) !== k.status_ms) error = true;
++  }
++  if (error) return "error";
++  return w.status === "done" || chatAgents().some((a) => a.space === w.id && a.status === "done") ? "done" : null;
++};
+ 
+ // A space speaks up only when something in it needs you.
+ export function glyph(status) {
+@@ -745,6 +764,8 @@ export default class Spaces extends View {
+           .when(Boolean(this.pilotMark(w, t)), (el) => el.child(this.pilotMark(w, t)))
+           // local: an agent in this space is working (any, also behind a done one): a small breathing dot.
+           .when(working(w), (el) => el.child(div().id(`working-${w.id}`).size(6).rounded(3).flex_none().bg(t.working).loop("opacity", { from: 0.35, to: 1, period: 1200 })))
++          // local: work finished while you weren't looking: green when it went well, red on an error.
++          .when(!working(w) && Boolean(outcome(w)), (el) => el.child(div().id(`outcome-${w.id}`).size(6).rounded(3).flex_none().bg(outcome(w) === "error" ? t.ansi1 : t.ansi2)))
+           .child(g ? this.gitTail(g, tree, name, t, label) : h_flex().flex_1().min_w(0).justify_end().text_size(TEXT.label).text_color(t.dim)
+             .when(Boolean(label), (el) => el.child(div().min_w(0).truncate().child(label))))
+           .when(quiet, (el) => el.child(svg("mods/spaces-chat/bell-off.svg").size(13).flex_none().text_color(t.dim)))
