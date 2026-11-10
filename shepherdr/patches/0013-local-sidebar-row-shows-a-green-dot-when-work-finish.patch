@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Chris F Ravenscroft <chris@voilaweb.com>
 Date: Mon, 9 Nov 2026 16:57:39 -0800
-Subject: [PATCH 13/13] local: sidebar row shows a green dot when work finished
+Subject: [PATCH 13/14] local: sidebar row shows a green dot when work finished
  unseen, red when an agent reported an error
 
 ---

@@ -1,0 +1,81 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chris F Ravenscroft <chris@voilaweb.com>
+Date: Tue, 10 Nov 2026 09:18:04 -0800
+Subject: [PATCH 14/14] local: right-click a pane header to rename it (core
+ label shepherdr.name on its terminal)
+
+---
+ mods/pane-chat/main.js   | 13 +++++++++++--
+ mods/prompt-chat/main.js |  4 +++-
+ 2 files changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/mods/pane-chat/main.js b/mods/pane-chat/main.js
+index 3dd53f24..85ac6a45 100644
+--- a/mods/pane-chat/main.js
++++ b/mods/pane-chat/main.js
+@@ -15,7 +15,7 @@
+ 
+ import { View, div, svg, image } from "gpui-kit";
+ import { h_flex } from "gpui-base";
+-import { props, run, theme, home, exec, hc, notify, nextCommand, shared, setShared } from "herdr";
++import { props, run, theme, home, exec, hc, notify, nextCommand, shared, setShared, openOverlay } from "herdr"; // local: openOverlay
+ import { panes, terminals, spaces, inRender } from "./live.js";
+ import { spaceName } from "./core/spaces.js";
+ import { apSpace, apWatch, apPoll, apGroup, apHeartbeatLink, COMPACT_BELOW } from "./autopilot.js";
+@@ -27,6 +27,9 @@ import { isHermes } from "./core/hermes.js"; // local: Hermes
+ 
+ const CHAT = "chat";
+ const LABEL = "herdr.chat";
++// local: a name the person gave the pane (right-click the header), a core label on its terminal: it follows the
++// agent through Chat/Terminal swaps and shows on every screen.
++const NAME = "shepherdr.name";
+ // When a toggle last swapped a pane (every copy of this build shares it).
+ let lastSwap = 0;
+ 
+@@ -239,6 +242,8 @@ export default class Pane extends View {
+     const isAssistant = Boolean(lazy) || terminals().find((x) => x.address === (agent ?? self.terminal))?.labels?.["herdr.role"] === "coordinator";
+     const space = isAssistant ? spaces().find((s) => s.tabs?.some((x) => x.id === self.tab)) : null;
+     const name = art ?? (isAssistant ? spaceName(space, { home: home() }) : chatMode && p === self ? "Chat" : prog);
++    const named = (agent ?? self.terminal) ? terminals().find((x) => x.address === (agent ?? self.terminal))?.labels?.[NAME] || null : null; // local
++    const shown = art ?? named ?? name; // local: the person's name wins
+     const pic = art !== null ? svg("mods/artifacts/artifacts.svg").size(14).flex_none().text_color(t.dim) : icon(p.program, 14, t.dim);
+     const st = p.status;
+     const pane = self.pane;
+@@ -261,8 +266,12 @@ export default class Pane extends View {
+       .on_hover((hovered, cx) => { this.hovered = hovered; if (!hovered) this.ending = false; cx.notify(); })
+       .on_size_change((size, cx) => { if (Math.round(size.width) !== this.width) { this.width = Math.round(size.width); cx.notify(); } })
+       .on_click(() => run("pane.focus", { pane }))
++      // local: right-click renames the pane (empty: back to the program's name).
++      .when(Boolean(agent ?? self.terminal) && !art, (el) => el.on_mouse_down("right", (_e, cx) => { cx.stop_propagation();
++        openOverlay({ mod: "prompt-chat", kind: "dialog", width: 400, height: 196, props: { title: "Rename pane", value: named ?? "",
++          placeholder: name, hint: "Empty: back to the program's name", setLabel: { terminal: agent ?? self.terminal, key: NAME } } }); }))
+       .when(Boolean(pic), (el) => el.child(pic))
+-      .child(div().flex_none().max_w(260).min_w(0).truncate().font_medium().text_color(t.foreground).child(name))
++      .child(div().flex_none().max_w(260).min_w(0).truncate().font_medium().text_color(t.foreground).child(shown)) // local: shown
+       // The folder gives way first; the switch keeps its width; the gap after pushes the rest right.
+       .child(div().flex_shrink_1().min_w(0).truncate().text_color(t.dim).child(folder(p.cwd)))
+       .child(div().flex_1())
+diff --git a/mods/prompt-chat/main.js b/mods/prompt-chat/main.js
+index 12621213..8321dee2 100644
+--- a/mods/prompt-chat/main.js
++++ b/mods/prompt-chat/main.js
+@@ -2,9 +2,10 @@
+ // dialog with props { title, label (over the field, default "Name"), value, placeholder, hint,
+ // verb (the button, default "Save"), command: { name, args } }: the command runs with
+ // { ...args, name: the text }. Enter saves, Esc cancels.
++// local: or props.setLabel: { terminal, key } sets that core label on the terminal to the text (empty: removed).
+ import { View, div } from "gpui-kit";
+ import { v_flex, InputState, Input } from "gpui-base";
+-import { run, props, closeOverlay, theme } from "herdr";
++import { run, props, closeOverlay, theme, hc } from "herdr"; // local: hc
+ import { dialogFooter, TEXT, RADIUS, H } from "./ui.js";
+ 
+ export default class Prompt extends View {
+@@ -27,6 +28,7 @@ export default class Prompt extends View {
+   submit() {
+     const p = props();
+     closeOverlay(p.overlay);
++    if (p.setLabel) return void hc(["label", p.setLabel.terminal, `${p.setLabel.key}=${this.text.trim()}`]); // local: a label
+     run(p.command.name, { ...(p.command.args ?? {}), name: this.text.trim() });
+   }
+ 
