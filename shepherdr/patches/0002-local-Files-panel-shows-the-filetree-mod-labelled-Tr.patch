@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Chris F Ravenscroft <chris@voilaweb.com>
 Date: Sun, 8 Nov 2026 21:02:32 -0800
-Subject: [PATCH 02/17] local: Files panel shows the filetree mod, labelled
+Subject: [PATCH 02/18] local: Files panel shows the filetree mod, labelled
  Tree
 
 ---

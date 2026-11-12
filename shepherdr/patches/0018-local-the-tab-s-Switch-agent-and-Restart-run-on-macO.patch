@@ -1,0 +1,177 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chris F Ravenscroft <chris@voilaweb.com>
+Date: Thu, 12 Nov 2026 15:44:02 -0800
+Subject: [PATCH 18/18] local: the tab's Switch agent and Restart run on macOS
+ (no setsid there); the chat's agent picker offers Hermes to the Assistant
+
+---
+ lib/coordinator.js                     |  3 ++-
+ mods/chat/main.js                      | 13 +++++++------
+ mods/coordinator/coordinator.js        |  3 ++-
+ mods/menu-tasks/coordinator.js         |  3 ++-
+ mods/new-menu-tasks/coordinator.js     |  3 ++-
+ mods/newspace/coordinator.js           |  3 ++-
+ mods/shepherdr-settings/coordinator.js |  3 ++-
+ mods/spaces-chat/coordinator.js        |  3 ++-
+ mods/tabs-tasks/coordinator.js         |  3 ++-
+ mods/tasks/coordinator.js              |  3 ++-
+ 10 files changed, 25 insertions(+), 15 deletions(-)
+
+diff --git a/lib/coordinator.js b/lib/coordinator.js
+index 29f9137a..eb834f5c 100644
+--- a/lib/coordinator.js
++++ b/lib/coordinator.js
+@@ -91,7 +91,8 @@ export function entryFor(k, known) {
+ 
+ // The helper scripts run detached: the menu that starts one closes at once.
+ function script(name, args) {
+-  return exec("bash", ["-c", 'setsid -f bash "$0" "$@" >/dev/null 2>&1 </dev/null', `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
++  // local: macOS has no setsid (the script never ran): its own process group instead, as the chat's voice helper does
++  return exec("bash", ["-c", 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null', `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+diff --git a/mods/chat/main.js b/mods/chat/main.js
+index 269400f8..b394a362 100644
+--- a/mods/chat/main.js
++++ b/mods/chat/main.js
+@@ -2565,12 +2565,12 @@ export default class Chat extends View {
+       try {
+         const stale = !this.pickCache || Date.now() - this.pickCache.at > 60000 || this.pickCache.machine !== this.machine;
+         if (stale) {
+-          const [claude, codex, known] = await Promise.all([agent.defaults("claude", this.machine), agent.defaults("codex", this.machine),
+-            knownAgents({ on: this.machine }).catch(() => [])]);
++          const [claude, codex, hermes, known] = await Promise.all([agent.defaults("claude", this.machine), agent.defaults("codex", this.machine), // local: hermes
++            agent.defaults("hermes", this.machine), knownAgents({ on: this.machine }).catch(() => [])]); // local: hermes
+           const prog = (key) => known.find((a) => a.key === key || (a.run ?? [])[0] === key);
+-          this.pickCache = { at: Date.now(), machine: this.machine, dflts: { claude, codex },
+-            icons: Object.fromEntries(["claude", "codex"].map((k) => [k, { icon: prog(k)?.icon ?? null, tint: Boolean(prog(k)?.tint) }])),
+-            installed: Object.fromEntries(["claude", "codex"].map((k) => [k, prog(k) ? prog(k).installed !== false : true])) };
++          this.pickCache = { at: Date.now(), machine: this.machine, dflts: { claude, codex, hermes }, // local: hermes
++            icons: Object.fromEntries(["claude", "codex", "hermes"].map((k) => [k, { icon: prog(k)?.icon ?? null, tint: Boolean(prog(k)?.tint) }])), // local: hermes
++            installed: Object.fromEntries(["claude", "codex", "hermes"].map((k) => [k, prog(k) ? prog(k).installed !== false : k !== "hermes"])) }; // local: Hermes only when Herdr knows it
+         }
+         const { dflts, icons, installed } = this.pickCache;
+         if (this.kind) dflts[this.kind] = this.dflt ?? dflts[this.kind];
+@@ -2578,7 +2578,8 @@ export default class Chat extends View {
+         const offline = this.machine && !online(this.machine) ? this.machine : null;
+         const currentRow = agent.rowFor(c.agent, c);
+         // Installed agents only (and always the one running).
+-        const menus = Object.fromEntries(["claude", "codex"].filter((k) => k === c.agent || installed[k])
++        // local: Hermes only for the Assistant (workers keep Claude Code and Codex)
++        const menus = Object.fromEntries(["claude", "codex", "hermes"].filter((k) => k === c.agent || (installed[k] && (k !== "hermes" || this.assistant())))
+           .map((k) => [k, agent.menuFor(k, dflts[k], k === c.agent ? currentRow : null)]));
+         // As tall as the menu can get (chat-models' sizes): border and padding, another machine's
+         // offline line, agent tabs, search, the list (it scrolls past 8 rows), separator, Reasoning header
+diff --git a/mods/coordinator/coordinator.js b/mods/coordinator/coordinator.js
+index 29f9137a..eb834f5c 100644
+--- a/mods/coordinator/coordinator.js
++++ b/mods/coordinator/coordinator.js
+@@ -91,7 +91,8 @@ export function entryFor(k, known) {
+ 
+ // The helper scripts run detached: the menu that starts one closes at once.
+ function script(name, args) {
+-  return exec("bash", ["-c", 'setsid -f bash "$0" "$@" >/dev/null 2>&1 </dev/null', `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
++  // local: macOS has no setsid (the script never ran): its own process group instead, as the chat's voice helper does
++  return exec("bash", ["-c", 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null', `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+diff --git a/mods/menu-tasks/coordinator.js b/mods/menu-tasks/coordinator.js
+index 29f9137a..eb834f5c 100644
+--- a/mods/menu-tasks/coordinator.js
++++ b/mods/menu-tasks/coordinator.js
+@@ -91,7 +91,8 @@ export function entryFor(k, known) {
+ 
+ // The helper scripts run detached: the menu that starts one closes at once.
+ function script(name, args) {
+-  return exec("bash", ["-c", 'setsid -f bash "$0" "$@" >/dev/null 2>&1 </dev/null', `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
++  // local: macOS has no setsid (the script never ran): its own process group instead, as the chat's voice helper does
++  return exec("bash", ["-c", 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null', `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+diff --git a/mods/new-menu-tasks/coordinator.js b/mods/new-menu-tasks/coordinator.js
+index 29f9137a..eb834f5c 100644
+--- a/mods/new-menu-tasks/coordinator.js
++++ b/mods/new-menu-tasks/coordinator.js
+@@ -91,7 +91,8 @@ export function entryFor(k, known) {
+ 
+ // The helper scripts run detached: the menu that starts one closes at once.
+ function script(name, args) {
+-  return exec("bash", ["-c", 'setsid -f bash "$0" "$@" >/dev/null 2>&1 </dev/null', `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
++  // local: macOS has no setsid (the script never ran): its own process group instead, as the chat's voice helper does
++  return exec("bash", ["-c", 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null', `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+diff --git a/mods/newspace/coordinator.js b/mods/newspace/coordinator.js
+index 29f9137a..eb834f5c 100644
+--- a/mods/newspace/coordinator.js
++++ b/mods/newspace/coordinator.js
+@@ -91,7 +91,8 @@ export function entryFor(k, known) {
+ 
+ // The helper scripts run detached: the menu that starts one closes at once.
+ function script(name, args) {
+-  return exec("bash", ["-c", 'setsid -f bash "$0" "$@" >/dev/null 2>&1 </dev/null', `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
++  // local: macOS has no setsid (the script never ran): its own process group instead, as the chat's voice helper does
++  return exec("bash", ["-c", 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null', `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+diff --git a/mods/shepherdr-settings/coordinator.js b/mods/shepherdr-settings/coordinator.js
+index 29f9137a..eb834f5c 100644
+--- a/mods/shepherdr-settings/coordinator.js
++++ b/mods/shepherdr-settings/coordinator.js
+@@ -91,7 +91,8 @@ export function entryFor(k, known) {
+ 
+ // The helper scripts run detached: the menu that starts one closes at once.
+ function script(name, args) {
+-  return exec("bash", ["-c", 'setsid -f bash "$0" "$@" >/dev/null 2>&1 </dev/null', `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
++  // local: macOS has no setsid (the script never ran): its own process group instead, as the chat's voice helper does
++  return exec("bash", ["-c", 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null', `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+diff --git a/mods/spaces-chat/coordinator.js b/mods/spaces-chat/coordinator.js
+index 29f9137a..eb834f5c 100644
+--- a/mods/spaces-chat/coordinator.js
++++ b/mods/spaces-chat/coordinator.js
+@@ -91,7 +91,8 @@ export function entryFor(k, known) {
+ 
+ // The helper scripts run detached: the menu that starts one closes at once.
+ function script(name, args) {
+-  return exec("bash", ["-c", 'setsid -f bash "$0" "$@" >/dev/null 2>&1 </dev/null', `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
++  // local: macOS has no setsid (the script never ran): its own process group instead, as the chat's voice helper does
++  return exec("bash", ["-c", 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null', `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+diff --git a/mods/tabs-tasks/coordinator.js b/mods/tabs-tasks/coordinator.js
+index 29f9137a..eb834f5c 100644
+--- a/mods/tabs-tasks/coordinator.js
++++ b/mods/tabs-tasks/coordinator.js
+@@ -91,7 +91,8 @@ export function entryFor(k, known) {
+ 
+ // The helper scripts run detached: the menu that starts one closes at once.
+ function script(name, args) {
+-  return exec("bash", ["-c", 'setsid -f bash "$0" "$@" >/dev/null 2>&1 </dev/null', `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
++  // local: macOS has no setsid (the script never ran): its own process group instead, as the chat's voice helper does
++  return exec("bash", ["-c", 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null', `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+diff --git a/mods/tasks/coordinator.js b/mods/tasks/coordinator.js
+index 29f9137a..eb834f5c 100644
+--- a/mods/tasks/coordinator.js
++++ b/mods/tasks/coordinator.js
+@@ -91,7 +91,8 @@ export function entryFor(k, known) {
+ 
+ // The helper scripts run detached: the menu that starts one closes at once.
+ function script(name, args) {
+-  return exec("bash", ["-c", 'setsid -f bash "$0" "$@" >/dev/null 2>&1 </dev/null', `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
++  // local: macOS has no setsid (the script never ran): its own process group instead, as the chat's voice helper does
++  return exec("bash", ["-c", 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null', `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.

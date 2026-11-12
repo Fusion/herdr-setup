@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Chris F Ravenscroft <chris@voilaweb.com>
 Date: Sun, 8 Nov 2026 23:03:20 -0800
-Subject: [PATCH 09/17] local: Stop sends Ctrl+C to Hermes (it ignores Esc)
+Subject: [PATCH 09/18] local: Stop sends Ctrl+C to Hermes (it ignores Esc)
 
 ---
  mods/chat/main.js | 3 ++-
