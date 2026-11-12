@@ -2,5 +2,4 @@
 # (an installed one is left alone: some update themselves). One per line:
 # name  git-url  commit-or-tag  folder-in-repo  [patch in this folder, or -]  [helper: release asset prefix, or -]
 git-grapher  https://github.com/TomiXRM/git-grapher.git  v0.1.0  mods/git-grapher  -  ggit-helper
-agent-cards  https://github.com/dougcunha/herdr-mods.git  04c43e01ab5f45fcd2b42617c8fec0d3af970b89  agent-cards-app/mods/agent-cards  -  -
 ci-dash      https://github.com/dougcunha/herdr-mods.git  04c43e01ab5f45fcd2b42617c8fec0d3af970b89  ci-dash-app/mods/ci-dash  ci-dash.patch  -
