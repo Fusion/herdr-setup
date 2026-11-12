@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Chris F Ravenscroft <chris@voilaweb.com>
 Date: Tue, 10 Nov 2026 10:19:11 -0800
-Subject: [PATCH 15/15] =?UTF-8?q?local:=20a=20pane=20header's=20right-clic?=
+Subject: [PATCH 15/17] =?UTF-8?q?local:=20a=20pane=20header's=20right-clic?=
  =?UTF-8?q?k=20opens=20a=20menu=20(Rename=E2=80=A6)=20like=20a=20tab's?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

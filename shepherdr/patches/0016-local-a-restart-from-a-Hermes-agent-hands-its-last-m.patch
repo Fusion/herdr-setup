@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chris F Ravenscroft <chris@voilaweb.com>
+Date: Thu, 12 Nov 2026 13:09:59 -0800
+Subject: [PATCH 16/17] local: a restart from a Hermes agent hands its last
+ messages to the new one (hermes-history.sh)
+
+---
+ mods/coordinator/hermes-history.sh | 57 ++++++++++++++++++++++++++++++
+ mods/coordinator/restart.sh        | 10 ++++++
+ 2 files changed, 67 insertions(+)
+ create mode 100755 mods/coordinator/hermes-history.sh
+
+diff --git a/mods/coordinator/hermes-history.sh b/mods/coordinator/hermes-history.sh
+new file mode 100755
+index 00000000..cfb34bcd
+--- /dev/null
++++ b/mods/coordinator/hermes-history.sh
+@@ -0,0 +1,57 @@
++#!/usr/bin/env bash
++# local: a Hermes agent's recent conversation, for restart.sh's handoff (Hermes keeps no log file per session).
++# Usage: hermes-history.sh <hermes pid> <out file>
++# Finds its session as core/hermes.js HERMES_FIND does (~/.hermes/runtime/active_sessions.json names the process's
++# session; the session lives in ~/.hermes/state.db or a profile's), writes its last 40 messages to <out file> and
++# prints "<state.db> <session id>". Prints nothing when it isn't found.
++python3 -I - "$1" "$2" <<'PY'
++import glob, json, os, sqlite3, subprocess, sys
++pid, out = sys.argv[1:3]
++def kids(p):
++    found = subprocess.run(["pgrep", "-P", p], capture_output=True, text=True).stdout.split()
++    return [k for c in found for k in [c, *kids(c)]]
++pids = {pid, *kids(pid)}
++root = os.path.expanduser("~/.hermes")
++try:
++    entries = json.load(open(os.path.join(root, "runtime", "active_sessions.json"))).get("entries", [])
++except Exception:
++    entries = []
++mine = sorted((e for e in entries if str(e.get("pid")) in pids), key=lambda e: e.get("updated_at") or 0)
++if not mine:
++    sys.exit()
++ids = [str(x) for x in ((mine[-1].get("metadata") or {}).get("live_session_id"), mine[-1].get("session_id")) if x]
++at = float(mine[-1].get("started_at") or 0)
++found = None
++dbs = [os.path.join(root, "state.db"), *glob.glob(os.path.join(root, "profiles", "*", "state.db"))]
++for db in dbs:
++    try:
++        con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
++        hit = next((s for s in ids if con.execute("select 1 from sessions where id=?", (s,)).fetchone()), None)
++        # older Hermes named another id in the registry: the session that started within a moment of it
++        hit = hit or (con.execute("select id from sessions where started_at between ? and ? order by abs(started_at - ?) limit 1",
++                                  (at - 10, at + 10, at)).fetchone() or [None])[0]
++        if hit:
++            found = (db, con, hit)
++            break
++    except sqlite3.Error:
++        pass
++if not found:
++    sys.exit()
++db, con, sid = found
++rows = con.execute("select role, content, tool_calls, tool_name from messages where session_id=? and coalesce(active, 1) = 1 "
++                   "order by id desc limit 40", (sid,)).fetchall()[::-1]
++with open(out, "w") as f:
++    for role, content, calls, tool in rows:
++        text = (content or "").strip()
++        if role == "tool":
++            text = "(%s output) %s" % (tool or "tool", text[:400])
++        elif calls:
++            try:
++                names = ", ".join("%s %s" % (c["function"]["name"], c["function"].get("arguments", "")[:200]) for c in json.loads(calls))
++            except Exception:
++                names = calls[:200]
++            text = (text + "\n" if text else "") + "[calls] " + names
++        if text:
++            f.write("## %s\n%s\n\n" % (role, text[:4000]))
++print(db, sid)
++PY
+diff --git a/mods/coordinator/restart.sh b/mods/coordinator/restart.sh
+index 81aad29f..b0ce4b94 100755
+--- a/mods/coordinator/restart.sh
++++ b/mods/coordinator/restart.sh
+@@ -53,6 +53,15 @@ if [ "$app" = claude-code ] && [ -n "$pid" ]; then
+   sid=$(jq -r '.sessionId // empty' "$HOME/.claude/sessions/$pid.json" 2>/dev/null)
+   [ -n "$sid" ] && log=$(find "$HOME/.claude/projects" -name "$sid.jsonl" 2>/dev/null | head -1)
+ fi
++# local: Hermes keeps its sessions in a database: its last messages go in a file beside the screen, and the handoff
++# says how to read more (hermes-history.sh).
++hermes=""
++if [ -z "$log" ] && [ -n "$pid" ] && { [ "$app" = hermes ] || [ "$(get .foreground.name)" = hermes ] || get '.foreground.argv[]?' | grep -qE 'hermes-agent|hermes_cli'; }; then
++  hlog="$dir/$old-$(date +%s)-hermes.md"
++  read -r hdb hsid < <(bash "${HERDR_APP_HOME:-$HOME/.config/herdr-app}/mods/coordinator/hermes-history.sh" "$pid" "$hlog" 2>/dev/null)
++  [ -n "${hsid:-}" ] && { log=$hlog app=hermes
++    hermes=" That is Hermes's last 40 messages; for more: sqlite3 $hdb \"select role, content from messages where session_id='$hsid' order by id desc limit 100\"."; }
++fi
+ if [ -z "$log" ] && [ -n "$created" ]; then
+   log=$(find "$HOME/.claude/projects" "$HOME/.codex/sessions" "$HOME/.pi/agent/sessions" "$HOME/.local/share/opencode" \
+       -type f \( -name '*.jsonl' -o -name '*.json' \) -newermt "@$((created / 1000))" 2>/dev/null \
+@@ -61,6 +70,7 @@ fi
+ was=${app:-the previous agent}
+ handoff="You are taking over this tab from $was ($old), which was restarted."
+ [ -n "$log" ] && handoff+=" Its session log is $log: read the recent part to pick up where it left off."
++handoff+=$hermes # local: Hermes
+ handoff+=" Its last screen is saved in $screen."
+ 
+ if [ "$role" = coordinator ]; then

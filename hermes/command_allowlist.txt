@@ -1,0 +1,32 @@
+# What a Hermes Assistant runs without stopping for approval (the chat has no approval cards for Hermes).
+# bin/apply adds each line to command_allowlist in ~/.hermes/config.yaml (never removes one), and for a line that
+# starts with a Herdr program (not git) also the same line with that program's full path on this machine.
+# Hermes matches the whole command, exactly or as a glob; a command with a pipe, ; or && never matches.
+# Hermes already runs most of these unasked: the allowlist covers the ones its risk guards would stop,
+# like `hc send t "… rm -rf build …"`.
+herdr-task *
+hc *
+herdr-artifact *
+herdr-secret *
+# read-only git
+git status
+git status *
+git log
+git log *
+git diff
+git diff *
+git show
+git show *
+git branch
+git branch --show-current
+git branch -a
+git branch -v
+git branch -vv
+git rev-parse *
+git ls-files
+git ls-files *
+git blame *
+git remote -v
+git merge-base *
+git describe
+git describe *

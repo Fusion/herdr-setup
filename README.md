@@ -18,6 +18,7 @@ herdr/third-party/mods.txt    other people's mods, pinned (Git Grapher, CI Dash)
 herdr/third-party/*.patch     my changes to them (ci-dash.patch: other gh logins, plainer errors, "CI runs")
 hermes/plugins/herdr-core-status   Hermes plugin: tells Herdr when Hermes works, waits on you, is idle
 hermes/skills/herdr-terminals      Hermes skill: hc send/read/run, to talk to other agents
+hermes/command_allowlist.txt       what a Hermes Assistant runs without asking (bin/apply adds it to ~/.hermes/config.yaml)
 ```
 
 ## New machine
@@ -25,7 +26,8 @@ hermes/skills/herdr-terminals      Hermes skill: hc send/read/run, to talk to ot
 1. Install Herdr, Bun, and (optionally) Hermes.
 2. `bin/apply`: clones Shepherdr to `~/Projects/shepherdr` (or `$SHEPHERDR_DIR`), makes branch
    `local` from upstream main plus the patches, runs the checks, installs Shepherdr with your keys
-   kept, applies the two post-install fixes, and installs the Hermes plugin and skill.
+   kept, applies the two post-install fixes, installs the Hermes plugin and skill, and adds the
+   Hermes Assistant's commands to Hermes's `command_allowlist`.
 3. In Herdr pick the Shepherdr layout (Ctrl+Shift+L).
 
 ## Updating (new Shepherdr or Hermes release)
@@ -62,11 +64,18 @@ and commit (`bin/apply` copies this repo's version over the installed one).
 | 4 | Hermes in the Chat view: history, tool rows, failed steps, questions answered from the card, Stop = Ctrl+C, the chat ends when Hermes exits | new `core/hermes.js` (copied into `mods/chat/core`, `mods/pane-chat/core` by `bin/sync-shared`, listed in `lib/COPIES`); hooks in `core/chat-log.js`, `core/chat-reader.js`, `mods/chat/main.js`, `mods/pane-chat/main.js`; `test/hermes.test.js` | Reads `~/.hermes/state.db`; the session comes from `~/.hermes/runtime/active_sessions.json` |
 | 5 | Hermes plugin `herdr-core-status`: working / waiting on you / idle, and `error` when a turn fails (not when you stop it) | `hermes/plugins/` here | Hermes 0.23 runs turns in its gateway, so the plugin writes Herdr's status escape (OSC 7501, `msg` base64) to the CLI's tty |
 | 6 | Hermes skill `herdr-terminals` | `hermes/skills/` here | Teaches Hermes `hc`, so its chat shows the messages it sends other agents |
+| 7 | Hermes as the **Assistant**: Settings (Assistant row only), the New space dialog and the chat's model menu offer Hermes when it is installed. Model: Hermes's own default or one typed by id (`-m`). Permissions: Auto (plain `hermes`) or Full access (`--yolo`) | `core/hermes.js` (`hermesMenu`, `hermesArgv`, `hermesCurrent`, `withoutHermes`; now also copied into `chat-models`, `newspace`, `shepherdr-settings`, `coordinator`); hooks in `core/agents.js`, `lib/settings.js`, `mods/shepherdr-settings/main.js`, `mods/chat/main.js`, `mods/chat-models/main.js`, `herdr_task/settings.py` (`argv_for`); `test/hermes.test.js`, `test/test_hermes_settings.py` | Workers and the Reviewer keep Claude Code and Codex: `herdr-task`'s first prompt and resume don't know Hermes |
+| 8 | A restart from a Hermes agent (to another agent, or another Hermes) hands over its last 40 messages in a file beside the saved screen, and a `sqlite3` line to read more | new `mods/coordinator/hermes-history.sh`; hook in `mods/coordinator/restart.sh` | Hermes has no log file per session; found as `HERMES_FIND` does (`active_sessions.json` + `state.db`) |
+| 9 | Auto approvals: `bin/apply` adds `hermes/command_allowlist.txt` (`herdr-task`, `hc`, `herdr-artifact`, `herdr-secret`, read-only `git`) to `command_allowlist` in `~/.hermes/config.yaml` through Hermes's own config code; it only adds | `bin/apply`, `hermes/` here | The chat has no approval cards for Hermes, and Hermes has no per-launch allowlist flag |
 
 Post-install fixes `bin/apply` makes every time: removes `ctrl-k` (jump) from `layout:shepherdr` in
 `~/.config/herdr-app/keys.json` (only cmd-k wanted), and replaces `mods/tabs-tasks/main.js` with the
 installer's `main.js.new` when it writes one.
 
-Hermes limits: no approval cards, background jobs, slash or model menu; after `/new` the chat keeps
+Hermes limits: no approval cards (Auto still stops at a risky command outside the allowlist, like a hard git reset:
+answer it in the terminal, or pick Full access), background jobs or slash menu; not for task workers or the Reviewer;
+no reasoning level; the web app's Settings don't offer it (only the window's); a model change restarts it with a
+handoff, never in the same session; the allowlist matches a whole command, so one with a pipe, `;` or `&&` can still
+ask; after `/new` the chat keeps
 the first session until Hermes restarts; quitting Hermes mid-turn can leave the sidebar dot on;
 depends on Hermes's state.db layout and its question picker's keys.

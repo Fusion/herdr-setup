@@ -5,7 +5,7 @@
 #      then `local` is rebased onto the latest upstream main (git rebase).
 #      A conflict stops here: fix it, `git am --continue` / `git rebase --continue`, run apply again.
 #   2. Shepherdr's own checks and installer, then the two fixes its installer needs every time.
-#   3. The Hermes plugin and skill, when Hermes is installed.
+#   3. The Hermes plugin and skill, and the commands a Hermes Assistant runs unasked, when Hermes is installed.
 # Flags: --no-pull (don't fetch upstream), --no-rebase (stay on the upstream the branch is on;
 # a new machine stays on shepherdr/BASE), --no-install (stop after step 1).
 set -euo pipefail
@@ -100,6 +100,31 @@ if command -v hermes >/dev/null && [ -d "$HOME/.hermes" ]; then
   cp -R "$KIT/hermes/skills/herdr-terminals" "$HOME/.hermes/skills/autonomous-ai-agents/"
   hermes plugins disable herdr-core-status >/dev/null 2>&1 || true
   hermes plugins enable herdr-core-status
+  # A Hermes Assistant runs Herdr's commands and read-only git without asking (hermes/command_allowlist.txt), through
+  # Hermes's own config code, which keeps ${VAR} references in config.yaml as they are.
+  py=$HOME/.hermes/hermes-agent/venv/bin/python
+  if [ -x "$py" ]; then
+    "$py" - "$KIT/hermes/command_allowlist.txt" <<'EOF2'
+import os, shutil, sys
+sys.path.insert(0, os.path.expanduser("~/.hermes/hermes-agent"))
+from hermes_cli.config import load_config, save_config
+want = []
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if not line or line.startswith("#"):
+        continue
+    prog, _, rest = line.partition(" ")
+    full = shutil.which(prog) if prog != "git" else None  # agents are told to write herdr-task's full path
+    want += [line] + ([f"{full} {rest}".strip()] if full else [])
+cfg = load_config()
+have = cfg.get("command_allowlist") or []
+new = [w for w in dict.fromkeys(want) if w not in have]
+if new:
+    cfg["command_allowlist"] = [*have, *new]
+    save_config(cfg)
+print(f"Hermes command_allowlist: {len(new)} added" if new else "Hermes command_allowlist: up to date")
+EOF2
+  fi
 else
   say "Hermes not installed: skipped its plugin and skill"
 fi

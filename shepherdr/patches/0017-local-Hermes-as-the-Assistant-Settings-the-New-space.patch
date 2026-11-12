@@ -1,0 +1,1816 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chris F Ravenscroft <chris@voilaweb.com>
+Date: Thu, 12 Nov 2026 13:10:00 -0800
+Subject: [PATCH 17/17] local: Hermes as the Assistant: Settings, the New space
+ dialog and the chat offer it (Auto or Full access = --yolo)
+
+---
+ core/agents.js                         |  10 +-
+ core/hermes.js                         |  26 +++
+ lib/COPIES                             |   2 +-
+ lib/settings.js                        |   7 +
+ mods/chat-models/core/agents.js        |  10 +-
+ mods/chat-models/core/hermes.js        | 267 +++++++++++++++++++++++++
+ mods/chat-models/main.js               |   2 +-
+ mods/chat/core/agents.js               |  10 +-
+ mods/chat/core/hermes.js               |  26 +++
+ mods/chat/main.js                      |   7 +-
+ mods/chat/settings.js                  |   7 +
+ mods/coordinator/core/agents.js        |  10 +-
+ mods/coordinator/core/hermes.js        | 267 +++++++++++++++++++++++++
+ mods/newspace/core/agents.js           |  10 +-
+ mods/newspace/core/hermes.js           | 267 +++++++++++++++++++++++++
+ mods/newspace/settings.js              |   7 +
+ mods/pane-chat/core/hermes.js          |  26 +++
+ mods/shepherdr-settings/core/agents.js |  10 +-
+ mods/shepherdr-settings/core/hermes.js | 267 +++++++++++++++++++++++++
+ mods/shepherdr-settings/main.js        |   4 +-
+ mods/shepherdr-settings/settings.js    |   7 +
+ mods/tasks/bin/herdr_task/settings.py  |   3 +
+ test/hermes.test.js                    |  19 ++
+ test/test_hermes_settings.py           |  21 ++
+ 24 files changed, 1274 insertions(+), 18 deletions(-)
+ create mode 100644 mods/chat-models/core/hermes.js
+ create mode 100644 mods/coordinator/core/hermes.js
+ create mode 100644 mods/newspace/core/hermes.js
+ create mode 100644 mods/shepherdr-settings/core/hermes.js
+ create mode 100644 test/test_hermes_settings.py
+
+diff --git a/core/agents.js b/core/agents.js
+index 572c3762..24a2bd3a 100644
+--- a/core/agents.js
++++ b/core/agents.js
+@@ -2,7 +2,8 @@
+ // rules both the window's model menu (lib/agent.js, mods/chat-models) and the web app's use. Reading an agent's own
+ // settings and restarting it run where each side runs commands (lib/agent.js, service/agents.ts).
+ // Shared core: the source is core/agents.js; bin/sync-shared copies it into the mods in lib/COPIES.
+-export const NAMES = { claude: "Claude Code", codex: "Codex" };
++import { HERMES_NAME, hermesMenu, hermesArgv, hermesCurrent } from "./hermes.js"; // local: Hermes as the Assistant
++export const NAMES = { claude: "Claude Code", codex: "Codex", hermes: HERMES_NAME }; // local: hermes
+ 
+ // Claude Code's current models, as its /model menu offers them. `id` is what --model gets;
+ // `match` the names a running agent may report for it.
+@@ -59,6 +60,8 @@ export const DEFAULTS = `
+ if [ "$1" = claude ]; then
+   f="$HOME/.claude/settings.json"
+   command -v jq >/dev/null && [ -f "$f" ] && jq -r '"model\\t\\(.model // "")", "effort\\t\\(.effortLevel // "")", "fast\\t\\(if .fastMode == true then "on" else "" end)", "per\\t\\(.modelSettings // {} | with_entries(.value |= (.effortLevel // null)) | tojson)", "mode\\t\\(.permissions.defaultMode // "")"' "$f" 2>/dev/null
++elif [ "$1" = hermes ]; then # local: Hermes's default model (config.yaml model.default)
++  printf 'model\\t%s\\n' "$(awk '/^model:/ {f=1; next} f && /^[^ ]/ {exit} f && sub(/^  default:[ \\t]*/, "") {print; exit}' "$HOME/.hermes/config.yaml" 2>/dev/null)"
+ else
+   f="$HOME/.codex/config.toml"
+   for k in model model_reasoning_effort service_tier sandbox_mode approval_policy; do
+@@ -102,6 +105,7 @@ export function current(kind, argv, meta, dflt) {
+   argv = argv ?? [];
+   meta = meta ?? {};
+   dflt = dflt ?? {};
++  if (kind === "hermes") return hermesCurrent(argv, meta); // local: Hermes
+   if (kind === "claude") {
+     const alias = flag(argv, "--model") ?? dflt.model;
+     let fast = dflt.fast;
+@@ -149,6 +153,7 @@ export function contextWords(c) {
+ // offers (Codex: its own models_cache.json; Claude Code: its /model menu), the picker searches them.
+ // `dflt` is that agent's settings (defaults()); `current` its running model, kept in the list.
+ export function menuFor(agent, dflt, current = null) {
++  if (agent === "hermes") return hermesMenu(dflt, current); // local: Hermes
+   if (agent === "claude") {
+     const models = CLAUDE_MODELS.map((m) => ({ id: m.id, name: m.name, efforts: CLAUDE_EFFORTS,
+       defaultEffort: dflt?.per?.[m.match[1].replace(/\[1m\]$/, "")] ?? dflt?.effort ?? null, fast: m.id.startsWith("opus") }));
+@@ -164,7 +169,7 @@ export function menuFor(agent, dflt, current = null) {
+ 
+ // The levels a model typed by id gets: its agent's usual ones.
+ export function typedModel(agent, id) {
+-  return { id, name: agent === "claude" ? modelName(id) : id, efforts: agent === "claude" ? CLAUDE_EFFORTS : ["low", "medium", "high", "xhigh"], defaultEffort: null, fast: false, typed: true };
++  return { id, name: agent === "claude" ? modelName(id) : id, efforts: agent === "claude" ? CLAUDE_EFFORTS : agent === "hermes" ? [] : ["low", "medium", "high", "xhigh"], defaultEffort: null, fast: false, typed: true }; // local: hermes has none
+ }
+ 
+ // The person's picks in the model menus (the window's and the web's alike), in PICKS_FILE under the
+@@ -322,6 +327,7 @@ export function freshArgv(kind, argv) {
+ // How to start the chosen agent: { argv, resume } (resume: argv already continues the session).
+ // `session`: the old conversation's id when it can be resumed (same agent only).
+ export function argvFor(pick, old) {
++  if (pick.agent === "hermes") { const a = hermesArgv(pick); return { argv: a, resume: false, base: a }; } // local: Hermes (a restart hands off)
+   const same = pick.agent === old.agent;
+   const flags = same ? kept(pick.agent, old.argv ?? []) : [];
+   if (pick.agent === "claude") {
+diff --git a/core/hermes.js b/core/hermes.js
+index 6037711f..ada25c83 100644
+--- a/core/hermes.js
++++ b/core/hermes.js
+@@ -239,3 +239,29 @@ export function hermesFeed(conv, l, off, cleanUser) {
+   // A reply that ends the turn: nothing is running any more.
+   if (l.finish === "stop" && !l.tool_calls?.length) { conv.open.clear(); conv.waits.clear(); conv.waiting = false; conv.doing = null; }
+ }
++
++// ---- Hermes as the Assistant (HS-1): Settings and the New space dialog offer it for the Assistant only (workers keep
++// Claude Code and Codex); core/agents.js and lib/settings.js hook these in.
++export const HERMES_NAME = "Hermes";
++// Auto: Hermes asks only for a command its guards find risky, and herdr-setup's bin/apply allowlists Herdr's own
++// (herdr-task, hc, herdr-artifact, herdr-secret, read-only git) in ~/.hermes/config.yaml, so those never stop it: the
++// chat has no approval cards for Hermes. Full access: --yolo.
++export const HERMES_PERMS = [{ id: "auto", label: "Auto" }, { id: "full", label: "Full access" }];
++// Its model: Hermes's own default (config.yaml model.default, read by core/agents.js DEFAULTS), or one typed by id (-m).
++export function hermesMenu(dflt, current = null) {
++  const models = [{ id: "default", name: dflt?.model ? `Default (${dflt.model})` : "Hermes default", efforts: [], defaultEffort: null, fast: false }];
++  if (current && current !== "default") models.unshift({ id: current, name: current, efforts: [], defaultEffort: null, fast: false });
++  return { name: HERMES_NAME, perms: HERMES_PERMS, models };
++}
++// How to start it from a role's settings { model, perm }.
++export function hermesArgv(pick) {
++  return ["hermes", ...(pick?.model && pick.model !== "default" ? ["-m", pick.model] : []), ...(pick?.perm === "full" ? ["--yolo"] : [])];
++}
++// What a Hermes runs on, as core/agents.js current() says it for the others.
++export function hermesCurrent(argv, meta) {
++  const i = Math.max(argv.lastIndexOf("-m"), argv.lastIndexOf("--model"));
++  return { agent: "hermes", model: meta?.model ?? (i >= 0 ? argv[i + 1] : null) ?? "default", effort: null, fast: false,
++    perm: argv.includes("--yolo") ? "full" : "auto", used: meta?.used ?? null, window: meta?.window ?? null };
++}
++// What a worker or reviewer is offered: the same, without Hermes.
++export const withoutHermes = (data) => (data?.menus?.hermes ? { ...data, menus: Object.fromEntries(Object.entries(data.menus).filter(([k]) => k !== "hermes")) } : data);
+diff --git a/lib/COPIES b/lib/COPIES
+index e8ec629a..a7124eb0 100644
+--- a/lib/COPIES
++++ b/lib/COPIES
+@@ -28,7 +28,7 @@ core/person.js: chat shepherdr-settings tabs-tasks
+ core/spaces.js: chat spaces-chat shepherdr-settings jump pane-chat
+ core/autopilot.js: pane-chat shepherdr-settings
+ core/chat-reader.js: chat
+-core/hermes.js: chat pane-chat
++core/hermes.js: chat pane-chat chat-models newspace shepherdr-settings coordinator
+ core/clean-env.js: chat
+ core/worktree.js: task-changes task-pr
+ core/recipe.js: artifacts
+diff --git a/lib/settings.js b/lib/settings.js
+index caf18c66..8d0d6b2d 100644
+--- a/lib/settings.js
++++ b/lib/settings.js
+@@ -20,6 +20,7 @@ import * as fs from "fs/promises";
+ import * as agent from "./agent.js";
+ // The button's words and the choices on offer: core/settings.js, shared with the web app's Settings.
+ import { modelLabel, choicesFrom } from "./core/settings.js";
++import { menuFor } from "./core/agents.js"; // local: Hermes
+ 
+ const ROW = 31, LABEL = 110;
+ const LEVEL = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra", none: "None" };
+@@ -34,6 +35,12 @@ export async function loadChoices(machine = null) {
+   const installed = Object.fromEntries(["claude", "codex"].map((k) => [k, prog(k) ? prog(k).installed !== false : k === "claude"]));
+   const icons = Object.fromEntries(["claude", "codex"].map((k) => [k, { icon: prog(k)?.icon ?? null, tint: Boolean(prog(k)?.tint) }]));
+   const { menus, permDefault, defaults } = choicesFrom({ claude, codex }, installed);
++  // local: Hermes too when installed, for the Assistant only (Settings and the chat drop it for other roles: withoutHermes)
++  if (prog("hermes") && prog("hermes").installed !== false) {
++    menus.hermes = menuFor("hermes", await agent.defaults("hermes", machine));
++    permDefault.hermes = "auto";
++    icons.hermes = { icon: prog("hermes").icon ?? null, tint: Boolean(prog("hermes").tint) };
++  }
+   return { menus, icons, installed, permDefault, defaults };
+ }
+ 
+diff --git a/mods/chat-models/core/agents.js b/mods/chat-models/core/agents.js
+index 572c3762..24a2bd3a 100644
+--- a/mods/chat-models/core/agents.js
++++ b/mods/chat-models/core/agents.js
+@@ -2,7 +2,8 @@
+ // rules both the window's model menu (lib/agent.js, mods/chat-models) and the web app's use. Reading an agent's own
+ // settings and restarting it run where each side runs commands (lib/agent.js, service/agents.ts).
+ // Shared core: the source is core/agents.js; bin/sync-shared copies it into the mods in lib/COPIES.
+-export const NAMES = { claude: "Claude Code", codex: "Codex" };
++import { HERMES_NAME, hermesMenu, hermesArgv, hermesCurrent } from "./hermes.js"; // local: Hermes as the Assistant
++export const NAMES = { claude: "Claude Code", codex: "Codex", hermes: HERMES_NAME }; // local: hermes
+ 
+ // Claude Code's current models, as its /model menu offers them. `id` is what --model gets;
+ // `match` the names a running agent may report for it.
+@@ -59,6 +60,8 @@ export const DEFAULTS = `
+ if [ "$1" = claude ]; then
+   f="$HOME/.claude/settings.json"
+   command -v jq >/dev/null && [ -f "$f" ] && jq -r '"model\\t\\(.model // "")", "effort\\t\\(.effortLevel // "")", "fast\\t\\(if .fastMode == true then "on" else "" end)", "per\\t\\(.modelSettings // {} | with_entries(.value |= (.effortLevel // null)) | tojson)", "mode\\t\\(.permissions.defaultMode // "")"' "$f" 2>/dev/null
++elif [ "$1" = hermes ]; then # local: Hermes's default model (config.yaml model.default)
++  printf 'model\\t%s\\n' "$(awk '/^model:/ {f=1; next} f && /^[^ ]/ {exit} f && sub(/^  default:[ \\t]*/, "") {print; exit}' "$HOME/.hermes/config.yaml" 2>/dev/null)"
+ else
+   f="$HOME/.codex/config.toml"
+   for k in model model_reasoning_effort service_tier sandbox_mode approval_policy; do
+@@ -102,6 +105,7 @@ export function current(kind, argv, meta, dflt) {
+   argv = argv ?? [];
+   meta = meta ?? {};
+   dflt = dflt ?? {};
++  if (kind === "hermes") return hermesCurrent(argv, meta); // local: Hermes
+   if (kind === "claude") {
+     const alias = flag(argv, "--model") ?? dflt.model;
+     let fast = dflt.fast;
+@@ -149,6 +153,7 @@ export function contextWords(c) {
+ // offers (Codex: its own models_cache.json; Claude Code: its /model menu), the picker searches them.
+ // `dflt` is that agent's settings (defaults()); `current` its running model, kept in the list.
+ export function menuFor(agent, dflt, current = null) {
++  if (agent === "hermes") return hermesMenu(dflt, current); // local: Hermes
+   if (agent === "claude") {
+     const models = CLAUDE_MODELS.map((m) => ({ id: m.id, name: m.name, efforts: CLAUDE_EFFORTS,
+       defaultEffort: dflt?.per?.[m.match[1].replace(/\[1m\]$/, "")] ?? dflt?.effort ?? null, fast: m.id.startsWith("opus") }));
+@@ -164,7 +169,7 @@ export function menuFor(agent, dflt, current = null) {
+ 
+ // The levels a model typed by id gets: its agent's usual ones.
+ export function typedModel(agent, id) {
+-  return { id, name: agent === "claude" ? modelName(id) : id, efforts: agent === "claude" ? CLAUDE_EFFORTS : ["low", "medium", "high", "xhigh"], defaultEffort: null, fast: false, typed: true };
++  return { id, name: agent === "claude" ? modelName(id) : id, efforts: agent === "claude" ? CLAUDE_EFFORTS : agent === "hermes" ? [] : ["low", "medium", "high", "xhigh"], defaultEffort: null, fast: false, typed: true }; // local: hermes has none
+ }
+ 
+ // The person's picks in the model menus (the window's and the web's alike), in PICKS_FILE under the
+@@ -322,6 +327,7 @@ export function freshArgv(kind, argv) {
+ // How to start the chosen agent: { argv, resume } (resume: argv already continues the session).
+ // `session`: the old conversation's id when it can be resumed (same agent only).
+ export function argvFor(pick, old) {
++  if (pick.agent === "hermes") { const a = hermesArgv(pick); return { argv: a, resume: false, base: a }; } // local: Hermes (a restart hands off)
+   const same = pick.agent === old.agent;
+   const flags = same ? kept(pick.agent, old.argv ?? []) : [];
+   if (pick.agent === "claude") {
+diff --git a/mods/chat-models/core/hermes.js b/mods/chat-models/core/hermes.js
+new file mode 100644
+index 00000000..ada25c83
+--- /dev/null
++++ b/mods/chat-models/core/hermes.js
+@@ -0,0 +1,267 @@
++// local: Hermes Agent (github.com/NousResearch/hermes-agent) in the chat, beside Claude Code and Codex.
++// Kept in its own file so upstream updates rarely conflict; core/chat-log.js and core/chat-reader.js only hook it in.
++//
++// Hermes keeps every session in one SQLite file (~/.hermes/state.db, or a profile's), not a log per session, and
++// names which process runs a session in ~/.hermes/runtime/active_sessions.json ({ entries: [{ pid, started_at }] })
++// under an id the database doesn't use, so the session is matched by its start time. Its "log path" is
++// "<state.db>#<session id>", and a message's row id stands in for the byte offset Claude Code's and Codex's logs use.
++
++// A Hermes terminal: Herdr reports no app for it (no hook integration), and its foreground is Hermes's own python.
++export function isHermes(t) {
++  const argv = t?.foreground?.argv ?? [];
++  return t?.foreground?.name === "hermes" || argv.some((a) => /hermes-agent|hermes_cli/.test(String(a)));
++}
++
++// FIND's Hermes branch (args: kind pid): prints "<db>#<session>", "pending" (no messages yet), or nothing.
++// shortcut: matched by start time (within 10 s), not an exact id; two Hermes started in the same moment could swap. Use an exact id if Hermes ever stores one.
++// shortcut: found once per process; a /new or /resume inside the same Hermes keeps showing the first session until it restarts.
++export const HERMES_FIND = String.raw`
++if [ "$kind" = hermes ]; then
++python3 -I - "$pid" <<'PY'
++import glob, json, os, sqlite3, subprocess, sys
++def kids(p):
++    out = subprocess.run(["pgrep", "-P", p], capture_output=True, text=True).stdout.split()
++    return [k for c in out for k in [c, *kids(c)]]
++pids = {sys.argv[1], *kids(sys.argv[1])}
++root = os.path.expanduser("~/.hermes")
++try:
++    entries = json.load(open(os.path.join(root, "runtime", "active_sessions.json"))).get("entries", [])
++except Exception:
++    entries = []
++mine = sorted((e for e in entries if str(e.get("pid")) in pids), key=lambda e: e.get("updated_at") or 0)
++if not mine:
++    sys.exit()
++# Hermes 0.23 names the database's id ("local-…") in the registry: exact. Older ones named another id, so
++# then the session row that started within a moment of the registry entry is it.
++ids = [str(x) for x in ((mine[-1].get("metadata") or {}).get("live_session_id"), mine[-1].get("session_id")) if x]
++at = float(mine[-1].get("started_at") or 0)
++best = None
++dbs = [os.path.join(root, "state.db"), *glob.glob(os.path.join(root, "profiles", "*", "state.db"))]
++for db in dbs:
++    try:
++        con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
++        for sid in ids:
++            if con.execute("select 1 from sessions where id=?", (sid,)).fetchone():
++                has = con.execute("select 1 from messages where session_id=? limit 1", (sid,)).fetchone()
++                print("%s#%s" % (db, sid) if has else "pending"); sys.exit()
++    except sqlite3.Error:
++        pass
++for db in dbs:
++    try:
++        con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
++        for sid, started in con.execute("select id, started_at from sessions where started_at between ? and ?", (at - 10, at + 10)).fetchall():
++            if best is None or abs(started - at) < best[0]:
++                best = (abs(started - at), db, sid, con.execute("select 1 from messages where session_id=? limit 1", (sid,)).fetchone())
++    except sqlite3.Error:
++        pass
++if best and best[3]:
++    print("%s#%s" % (best[1], best[2])); sys.exit()
++print("pending")
++PY
++exit 0
++fi
++`;
++
++// LOG's Hermes branch, for a "<db>#<session>" path (args: mode path ...), answering as LOG does for a file:
++//   tail <path> <from>          "T <size> <from> <end>" and the rows from id <from>
++//   page <path> <before> <want> "P <start> <end>" and about <want> rows before id <before> (start 0: the first)
++//   results <path> <id>...      each tool row's output, as {"payload":{"output":…}} (resultText reads it)
++// A row comes back as "<id>\tJ\t<json>", a tool's result as "<id>\tR\t <call id>".
++export const HERMES_LOG = String.raw`
++case "$f" in *'#'*)
++python3 -I - "$@" <<'PY'
++import json, sqlite3, sys
++mode, f, *rest = sys.argv[1:]
++db, sid = f.rsplit("#", 1)
++try:
++    con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
++    con.execute("select 1 from messages limit 1")
++except sqlite3.Error:
++    print("missing"); sys.exit()
++COLS = "id, role, content, tool_calls, tool_call_id, tool_name, timestamp, finish_reason, reasoning, display_kind"
++def rows(where, args, order="asc", limit=-1):
++    q = "select %s from messages where session_id=? and coalesce(active, 1)=1 and %s order by id %s limit ?" % (COLS, where, order)
++    return con.execute(q, (sid, *args, limit)).fetchall()
++def emit(r):
++    i, role, content, calls, call_id, tool, ts, finish, reasoning, kind = r
++    if role == "tool":
++        # A call that failed (a non-zero exit, or an error): said before its result, for the step's mark.
++        try:
++            out = json.loads(content or "")
++        except ValueError:
++            out = None
++        # A clarify question's end: answered (what was picked or typed) or cancelled.
++        if tool == "clarify" and isinstance(out, dict) and isinstance(out.get("responses"), list):
++            said = [str(x.get("user_response")) for x in out["responses"] if isinstance(x, dict) and x.get("user_response")]
++            done = {"hermes": 1, "role": "clarify_done", "call_id": call_id, "outcome": out.get("outcome"), "answers": said}
++            print("%d\tJ\t%s" % (i, json.dumps(done, ensure_ascii=False)))
++        if isinstance(out, dict) and (out.get("exit_code") not in (None, 0) or out.get("error")):
++            fail = {"hermes": 1, "role": "tool_failed", "call_id": call_id, "exit": out.get("exit_code")}
++            print("%d\tJ\t%s" % (i, json.dumps(fail)))
++        print("%d\tR\t %s" % (i, call_id or "")); return
++    try:
++        calls = json.loads(calls) if calls else None
++    except ValueError:
++        calls = None
++    rec = {"hermes": 1, "role": role, "content": (content or "")[:200000], "tool_calls": calls, "ts": ts,
++           "finish": finish, "thinking": bool(reasoning), "display_kind": kind}
++    print("%d\tJ\t%s" % (i, json.dumps(rec, ensure_ascii=False)))
++top = (con.execute("select max(id) from messages where session_id=?", (sid,)).fetchone()[0] or -1) + 1
++if mode == "tail":
++    o = int(rest[0])
++    got = rows("id >= ?", (o,))
++    print("T %d %d %d" % (max(top, o), o, got[-1][0] + 1 if got else o))
++    for r in got: emit(r)
++elif mode == "page":
++    before, want = int(rest[0]), int(rest[1])
++    e = min(before, top) if top > 0 else 0
++    got = rows("id < ?", (e,), "desc", want)[::-1]
++    a = got[0][0] if got else 0
++    if got and not con.execute("select 1 from messages where session_id=? and id < ? limit 1", (sid, a)).fetchone():
++        a = 0
++    print("P %d %d" % (a, e))
++    for r in got: emit(r)
++elif mode == "results":
++    for o in rest:
++        r = con.execute("select content from messages where id=?", (int(o),)).fetchone()
++        out = (r[0] if r else "") or ""
++        try:
++            j = json.loads(out)
++            if isinstance(j, dict) and "output" in j:
++                out = str(j.get("output") or j.get("error") or "")
++        except ValueError:
++            pass
++        sys.stdout.write("\x1e%s\n%s\n" % (o, json.dumps({"payload": {"output": out[:65536]}}, ensure_ascii=False)))
++PY
++exit 0;;
++esac
++`;
++
++const clip = (s, n = 80) => { s = String(s ?? "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
++const base = (p) => String(p ?? "").split("/").filter(Boolean).pop() ?? "";
++const first = (c) => clip(String(c ?? "").replace(/^(cd [^&;]+(&&|;)\s*)+/, "").split(/\s*(?:&&|\|\||;|\|)\s*/)[0], 48);
++
++// One Hermes tool call as a chat step: { kind, line, doing }.
++export function hermesStep(name, a = {}) {
++  const path = a.path ?? a.file_path ?? "";
++  if (name === "terminal") return { kind: "run", line: `Ran ${clip(a.command)}`, doing: `Running ${first(a.command)}` };
++  if (name === "execute_code") return { kind: "run", line: "Ran a script", doing: "Running a script" };
++  if (name === "read_file") return { kind: "read", line: `Read ${base(path)}`, doing: `Reading ${base(path)}` };
++  if (name === "write_file" || name === "patch") return { kind: "edit", line: `Edited ${base(path)}`, doing: `Editing ${base(path)}` };
++  if (name === "search_files" || name === "session_search") return { kind: "search", line: `Searched ${clip(a.pattern ?? a.query, 50)}`, doing: "Searching" };
++  if (name === "web_search") return { kind: "web", line: `Searched the web: ${clip(a.query, 60)}`, doing: "Searching the web" };
++  if (name === "web_extract" || name.startsWith("browser_")) return { kind: "web", line: `Read ${clip((a.urls ?? [a.url]).filter(Boolean).join(", "), 60) || "a page"}`, doing: "Reading the web" };
++  if (name === "delegate_task") return { kind: "agent", line: `Asked a helper: ${clip(a.goal ?? a.task ?? a.prompt, 70)}`, doing: "Starting a helper" };
++  if (name === "todo") return { kind: "plan", line: "Updated its plan", doing: "Planning" };
++  return { kind: "tool", line: `Used ${name}`, doing: `Using ${name}` };
++}
++
++// Whether Hermes's screen shows these questions' picker at its first question, none answered yet:
++//   │ 2 questions │  │ ▸ Color? │  │   ❯ 1. Red (Recommended) │ ...  (box borders and wrapping taken out).
++export function hermesOnScreen(screen, questions) {
++  const s = String(screen ?? "").replace(/[│╭╮╰╯─]/g, " ").replace(/\s+/g, " ");
++  const q = questions?.[0], n = questions?.length ?? 0;
++  if (!q || !s.includes("needs your input")) return false;
++  const one = (w) => s.includes(String(w).replace(/\s+/g, " ").trim());
++  return one(`${n} question${n === 1 ? "" : "s"}`) && one(`▸ ${q.text}`) && !s.includes(`✓ ${q.text}`) && q.choices.every((c) => one(c.label));
++}
++
++// The keys that answer them on that picker: a choice's number answers its question and goes to the next (the last
++// one submits); "Other" is the number after the choices, then the words and Enter. -> [{ keys } | { paste }], or null.
++export function hermesSteps(questions, answers) {
++  if (!Array.isArray(answers) || answers.length !== questions.length) return null;
++  const steps = [];
++  for (const [i, q] of questions.entries()) {
++    const said = String(answers[i] ?? "").trim();
++    if (!said) return null;
++    const k = q.choices.findIndex((c) => c.label === said || c.label.replace(/\s*\(recommended\)\s*$/i, "") === said);
++    const pick = (n) => (n < 9 ? [String(n + 1)] : [...Array(n).fill("down"), "enter"]);
++    if (k >= 0) steps.push({ keys: pick(k) });
++    else steps.push({ keys: pick(q.choices.length) }, { paste: said });
++  }
++  return steps;
++}
++
++// Hermes's own rows that aren't the conversation (notices to the agent, model switches, hidden turns).
++const QUIET = new Set(["hidden", "internal_notification", "async_delegation_complete", "process_complete", "model_switch"]);
++
++// One record from HERMES_LOG into the conversation (conv: core/chat-log.js Conversation; cleanUser: its words cleaner).
++export function hermesFeed(conv, l, off, cleanUser) {
++  const at = Math.round((l.ts ?? 0) * 1000);
++  if (QUIET.has(l.display_kind)) return;
++  if (l.role === "user") {
++    const u = l.content ? cleanUser(l.content) : null;
++    if (u) conv.user(`u${off}`, { ...u, at });
++    return;
++  }
++  if (l.role === "clarify_done") {
++    const q = conv.questions.get(String(l.call_id ?? ""));
++    const said = (l.answers ?? []).filter(Boolean);
++    if (q && (l.outcome === "submitted" || said.length)) q.closed = "answered";
++    // The answer as the person's own message right after the question, as Claude Code's (Conversation.answers()).
++    if (said.length) { conv.waiting = false; conv.push({ kind: "user", id: `ua${off}`, text: said.join("\n\n"), at, answer: true }); }
++    return;
++  }
++  if (l.role === "tool_failed") {
++    const s = conv.calls.get(String(l.call_id ?? ""));
++    if (s) { s.failed = true; s.line += l.exit != null ? ` (exit ${l.exit})` : " (failed)"; }
++    return;
++  }
++  if (l.role !== "assistant") return;
++  if (l.display_kind === "failed_turn") { conv.push({ kind: "error", id: `e${off}`, text: l.content || "The turn failed." }); conv.open.clear(); conv.doing = null; return; }
++  const said = conv.agentText(l.content ?? "");
++  if (said) conv.push({ kind: "agent", id: `a${off}`, text: said, at });
++  for (const c of Array.isArray(l.tool_calls) ? l.tool_calls : []) {
++    const id = String(c?.call_id ?? c?.id ?? `c${off}`);
++    const name = String(c?.function?.name ?? "tool");
++    let a = c?.function?.arguments;
++    try { a = typeof a === "string" ? JSON.parse(a) : a; } catch { a = {}; }
++    a = a && typeof a === "object" ? a : {};
++    if (name === "clarify") {
++      // Hermes 0.23: { questions: [{ question, choices }] }; before: { question, choices }.
++      const qs = Array.isArray(a.questions) ? a.questions : [a];
++      const text = qs.map((q) => [q?.question, ...(Array.isArray(q?.choices) ? q.choices.map((o) => `- ${o}`) : [])].filter(Boolean).join("\n"))
++        .filter(Boolean).join("\n\n");
++      // As Codex's (core/asks.js codexQuestions): the chat's question card answers them on Hermes's screen.
++      const questions = qs.map((q) => ({ text: String(q?.question ?? ""), header: "",
++        choices: (Array.isArray(q?.choices) ? q.choices : []).map((c) => ({ label: String(c) })).filter((c) => c.label) })).filter((q) => q.text);
++      if (text) conv.asked(id, { kind: "ask", id: `q${off}`, text, ...(questions.length ? { questions } : {}) });
++      conv.open.set(id, "Asking you something");
++      conv.doing = "Asking you something";
++      continue;
++    }
++    const st = hermesStep(name, a);
++    st.at = at || Date.now();
++    conv.step(id, off, st, name === "delegate_task" ? id : null);
++    if (name === "terminal") conv.sent(String(a.command ?? ""), off, at);
++  }
++  if (!said && !l.tool_calls?.length && l.thinking && !conv.open.size) conv.doing = "Thinking";
++  // A reply that ends the turn: nothing is running any more.
++  if (l.finish === "stop" && !l.tool_calls?.length) { conv.open.clear(); conv.waits.clear(); conv.waiting = false; conv.doing = null; }
++}
++
++// ---- Hermes as the Assistant (HS-1): Settings and the New space dialog offer it for the Assistant only (workers keep
++// Claude Code and Codex); core/agents.js and lib/settings.js hook these in.
++export const HERMES_NAME = "Hermes";
++// Auto: Hermes asks only for a command its guards find risky, and herdr-setup's bin/apply allowlists Herdr's own
++// (herdr-task, hc, herdr-artifact, herdr-secret, read-only git) in ~/.hermes/config.yaml, so those never stop it: the
++// chat has no approval cards for Hermes. Full access: --yolo.
++export const HERMES_PERMS = [{ id: "auto", label: "Auto" }, { id: "full", label: "Full access" }];
++// Its model: Hermes's own default (config.yaml model.default, read by core/agents.js DEFAULTS), or one typed by id (-m).
++export function hermesMenu(dflt, current = null) {
++  const models = [{ id: "default", name: dflt?.model ? `Default (${dflt.model})` : "Hermes default", efforts: [], defaultEffort: null, fast: false }];
++  if (current && current !== "default") models.unshift({ id: current, name: current, efforts: [], defaultEffort: null, fast: false });
++  return { name: HERMES_NAME, perms: HERMES_PERMS, models };
++}
++// How to start it from a role's settings { model, perm }.
++export function hermesArgv(pick) {
++  return ["hermes", ...(pick?.model && pick.model !== "default" ? ["-m", pick.model] : []), ...(pick?.perm === "full" ? ["--yolo"] : [])];
++}
++// What a Hermes runs on, as core/agents.js current() says it for the others.
++export function hermesCurrent(argv, meta) {
++  const i = Math.max(argv.lastIndexOf("-m"), argv.lastIndexOf("--model"));
++  return { agent: "hermes", model: meta?.model ?? (i >= 0 ? argv[i + 1] : null) ?? "default", effort: null, fast: false,
++    perm: argv.includes("--yolo") ? "full" : "auto", used: meta?.used ?? null, window: meta?.window ?? null };
++}
++// What a worker or reviewer is offered: the same, without Hermes.
++export const withoutHermes = (data) => (data?.menus?.hermes ? { ...data, menus: Object.fromEntries(Object.entries(data.menus).filter(([k]) => k !== "hermes")) } : data);
+diff --git a/mods/chat-models/main.js b/mods/chat-models/main.js
+index caf6c332..f1e75822 100644
+--- a/mods/chat-models/main.js
++++ b/mods/chat-models/main.js
+@@ -25,7 +25,7 @@ import { h_flex, v_flex, InputState, Input, VirtualListScrollHandle, v_virtual_l
+ import { theme, props, setShared, closeOverlay, home, readTextFile, writeTextFile } from "herdr";
+ import { modelSections, parsePicks, pickKey, withPin, withRecent, PICKS_FILE } from "./core/agents.js";
+ 
+-const AGENTS = ["claude", "codex"];
++const AGENTS = ["claude", "codex", "hermes"]; // local: Hermes (offered for the Assistant only)
+ const LEVEL = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra", none: "None" };
+ // Sizes, as the chat counts them for the overlay's height (mods/chat openPicker): the model list
+ // scrolls past LIST; NOTE is a quiet line (an offline machine's; a new conversation's, two lines).
+diff --git a/mods/chat/core/agents.js b/mods/chat/core/agents.js
+index 572c3762..24a2bd3a 100644
+--- a/mods/chat/core/agents.js
++++ b/mods/chat/core/agents.js
+@@ -2,7 +2,8 @@
+ // rules both the window's model menu (lib/agent.js, mods/chat-models) and the web app's use. Reading an agent's own
+ // settings and restarting it run where each side runs commands (lib/agent.js, service/agents.ts).
+ // Shared core: the source is core/agents.js; bin/sync-shared copies it into the mods in lib/COPIES.
+-export const NAMES = { claude: "Claude Code", codex: "Codex" };
++import { HERMES_NAME, hermesMenu, hermesArgv, hermesCurrent } from "./hermes.js"; // local: Hermes as the Assistant
++export const NAMES = { claude: "Claude Code", codex: "Codex", hermes: HERMES_NAME }; // local: hermes
+ 
+ // Claude Code's current models, as its /model menu offers them. `id` is what --model gets;
+ // `match` the names a running agent may report for it.
+@@ -59,6 +60,8 @@ export const DEFAULTS = `
+ if [ "$1" = claude ]; then
+   f="$HOME/.claude/settings.json"
+   command -v jq >/dev/null && [ -f "$f" ] && jq -r '"model\\t\\(.model // "")", "effort\\t\\(.effortLevel // "")", "fast\\t\\(if .fastMode == true then "on" else "" end)", "per\\t\\(.modelSettings // {} | with_entries(.value |= (.effortLevel // null)) | tojson)", "mode\\t\\(.permissions.defaultMode // "")"' "$f" 2>/dev/null
++elif [ "$1" = hermes ]; then # local: Hermes's default model (config.yaml model.default)
++  printf 'model\\t%s\\n' "$(awk '/^model:/ {f=1; next} f && /^[^ ]/ {exit} f && sub(/^  default:[ \\t]*/, "") {print; exit}' "$HOME/.hermes/config.yaml" 2>/dev/null)"
+ else
+   f="$HOME/.codex/config.toml"
+   for k in model model_reasoning_effort service_tier sandbox_mode approval_policy; do
+@@ -102,6 +105,7 @@ export function current(kind, argv, meta, dflt) {
+   argv = argv ?? [];
+   meta = meta ?? {};
+   dflt = dflt ?? {};
++  if (kind === "hermes") return hermesCurrent(argv, meta); // local: Hermes
+   if (kind === "claude") {
+     const alias = flag(argv, "--model") ?? dflt.model;
+     let fast = dflt.fast;
+@@ -149,6 +153,7 @@ export function contextWords(c) {
+ // offers (Codex: its own models_cache.json; Claude Code: its /model menu), the picker searches them.
+ // `dflt` is that agent's settings (defaults()); `current` its running model, kept in the list.
+ export function menuFor(agent, dflt, current = null) {
++  if (agent === "hermes") return hermesMenu(dflt, current); // local: Hermes
+   if (agent === "claude") {
+     const models = CLAUDE_MODELS.map((m) => ({ id: m.id, name: m.name, efforts: CLAUDE_EFFORTS,
+       defaultEffort: dflt?.per?.[m.match[1].replace(/\[1m\]$/, "")] ?? dflt?.effort ?? null, fast: m.id.startsWith("opus") }));
+@@ -164,7 +169,7 @@ export function menuFor(agent, dflt, current = null) {
+ 
+ // The levels a model typed by id gets: its agent's usual ones.
+ export function typedModel(agent, id) {
+-  return { id, name: agent === "claude" ? modelName(id) : id, efforts: agent === "claude" ? CLAUDE_EFFORTS : ["low", "medium", "high", "xhigh"], defaultEffort: null, fast: false, typed: true };
++  return { id, name: agent === "claude" ? modelName(id) : id, efforts: agent === "claude" ? CLAUDE_EFFORTS : agent === "hermes" ? [] : ["low", "medium", "high", "xhigh"], defaultEffort: null, fast: false, typed: true }; // local: hermes has none
+ }
+ 
+ // The person's picks in the model menus (the window's and the web's alike), in PICKS_FILE under the
+@@ -322,6 +327,7 @@ export function freshArgv(kind, argv) {
+ // How to start the chosen agent: { argv, resume } (resume: argv already continues the session).
+ // `session`: the old conversation's id when it can be resumed (same agent only).
+ export function argvFor(pick, old) {
++  if (pick.agent === "hermes") { const a = hermesArgv(pick); return { argv: a, resume: false, base: a }; } // local: Hermes (a restart hands off)
+   const same = pick.agent === old.agent;
+   const flags = same ? kept(pick.agent, old.argv ?? []) : [];
+   if (pick.agent === "claude") {
+diff --git a/mods/chat/core/hermes.js b/mods/chat/core/hermes.js
+index 6037711f..ada25c83 100644
+--- a/mods/chat/core/hermes.js
++++ b/mods/chat/core/hermes.js
+@@ -239,3 +239,29 @@ export function hermesFeed(conv, l, off, cleanUser) {
+   // A reply that ends the turn: nothing is running any more.
+   if (l.finish === "stop" && !l.tool_calls?.length) { conv.open.clear(); conv.waits.clear(); conv.waiting = false; conv.doing = null; }
+ }
++
++// ---- Hermes as the Assistant (HS-1): Settings and the New space dialog offer it for the Assistant only (workers keep
++// Claude Code and Codex); core/agents.js and lib/settings.js hook these in.
++export const HERMES_NAME = "Hermes";
++// Auto: Hermes asks only for a command its guards find risky, and herdr-setup's bin/apply allowlists Herdr's own
++// (herdr-task, hc, herdr-artifact, herdr-secret, read-only git) in ~/.hermes/config.yaml, so those never stop it: the
++// chat has no approval cards for Hermes. Full access: --yolo.
++export const HERMES_PERMS = [{ id: "auto", label: "Auto" }, { id: "full", label: "Full access" }];
++// Its model: Hermes's own default (config.yaml model.default, read by core/agents.js DEFAULTS), or one typed by id (-m).
++export function hermesMenu(dflt, current = null) {
++  const models = [{ id: "default", name: dflt?.model ? `Default (${dflt.model})` : "Hermes default", efforts: [], defaultEffort: null, fast: false }];
++  if (current && current !== "default") models.unshift({ id: current, name: current, efforts: [], defaultEffort: null, fast: false });
++  return { name: HERMES_NAME, perms: HERMES_PERMS, models };
++}
++// How to start it from a role's settings { model, perm }.
++export function hermesArgv(pick) {
++  return ["hermes", ...(pick?.model && pick.model !== "default" ? ["-m", pick.model] : []), ...(pick?.perm === "full" ? ["--yolo"] : [])];
++}
++// What a Hermes runs on, as core/agents.js current() says it for the others.
++export function hermesCurrent(argv, meta) {
++  const i = Math.max(argv.lastIndexOf("-m"), argv.lastIndexOf("--model"));
++  return { agent: "hermes", model: meta?.model ?? (i >= 0 ? argv[i + 1] : null) ?? "default", effort: null, fast: false,
++    perm: argv.includes("--yolo") ? "full" : "auto", used: meta?.used ?? null, window: meta?.window ?? null };
++}
++// What a worker or reviewer is offered: the same, without Hermes.
++export const withoutHermes = (data) => (data?.menus?.hermes ? { ...data, menus: Object.fromEntries(Object.entries(data.menus).filter(([k]) => k !== "hermes")) } : data);
+diff --git a/mods/chat/main.js b/mods/chat/main.js
+index e9be7e62..269400f8 100644
+--- a/mods/chat/main.js
++++ b/mods/chat/main.js
+@@ -30,7 +30,7 @@ import * as fs from "fs/promises";
+ import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names, pilotLine } from "./core/chat-log.js";
+ import { BgJobs } from "./core/bg-jobs.js";
+ import { ChatReader } from "./core/chat-reader.js";
+-import { isHermes, hermesOnScreen, hermesSteps } from "./core/hermes.js"; // local: Hermes
++import { isHermes, hermesOnScreen, hermesSteps, withoutHermes } from "./core/hermes.js"; // local: Hermes
+ import { words, howAnswered, codexOnScreen, codexSteps } from "./core/asks.js";
+ // The rows' words and rules the web app's chat draws by too (core/chat-view.js).
+ import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed } from "./core/chat-view.js";
+@@ -1717,7 +1717,8 @@ export default class Chat extends View {
+     this.choice = { sel: null, data: null };
+     cx.spawn(async (cx) => {
+       try {
+-        const data = await choices.loadChoices(space?.machine ?? null);
++        let data = await choices.loadChoices(space?.machine ?? null); // local: let
++        if (this.role !== "coordinator") data = withoutHermes(data); // local: Hermes starts only as the Assistant
+         let kept = null;
+         try { kept = JSON.parse(localStorage.getItem(`choice:${this.slot}`) ?? "null"); } catch {}
+         const st = kept?.agent ? kept : props()?.settings;
+@@ -2587,7 +2588,7 @@ export default class Chat extends View {
+           at: at ? { x: Math.max(8, at.x - W + 90), y: Math.max(8, at.y - H - 10) } : "pointer",
+           props: { pane: this.pickKey(), offline, width: W, height: H, select: name ? findModel(menus, name) : null,
+             current: { agent: c.agent, model: currentRow, effort: c.effort ?? null, fast: c.fast, perm: c.perm ?? null },
+-            menus, icons, permDefault: { claude: dflts.claude?.mode ?? "manual", codex: "auto" } } });
++            menus, icons, permDefault: { claude: dflts.claude?.mode ?? "manual", codex: "auto", hermes: "auto" } } }); // local: hermes
+       } finally {
+         this.picking = false;
+         cx.notify();
+diff --git a/mods/chat/settings.js b/mods/chat/settings.js
+index caf18c66..8d0d6b2d 100644
+--- a/mods/chat/settings.js
++++ b/mods/chat/settings.js
+@@ -20,6 +20,7 @@ import * as fs from "fs/promises";
+ import * as agent from "./agent.js";
+ // The button's words and the choices on offer: core/settings.js, shared with the web app's Settings.
+ import { modelLabel, choicesFrom } from "./core/settings.js";
++import { menuFor } from "./core/agents.js"; // local: Hermes
+ 
+ const ROW = 31, LABEL = 110;
+ const LEVEL = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra", none: "None" };
+@@ -34,6 +35,12 @@ export async function loadChoices(machine = null) {
+   const installed = Object.fromEntries(["claude", "codex"].map((k) => [k, prog(k) ? prog(k).installed !== false : k === "claude"]));
+   const icons = Object.fromEntries(["claude", "codex"].map((k) => [k, { icon: prog(k)?.icon ?? null, tint: Boolean(prog(k)?.tint) }]));
+   const { menus, permDefault, defaults } = choicesFrom({ claude, codex }, installed);
++  // local: Hermes too when installed, for the Assistant only (Settings and the chat drop it for other roles: withoutHermes)
++  if (prog("hermes") && prog("hermes").installed !== false) {
++    menus.hermes = menuFor("hermes", await agent.defaults("hermes", machine));
++    permDefault.hermes = "auto";
++    icons.hermes = { icon: prog("hermes").icon ?? null, tint: Boolean(prog("hermes").tint) };
++  }
+   return { menus, icons, installed, permDefault, defaults };
+ }
+ 
+diff --git a/mods/coordinator/core/agents.js b/mods/coordinator/core/agents.js
+index 572c3762..24a2bd3a 100644
+--- a/mods/coordinator/core/agents.js
++++ b/mods/coordinator/core/agents.js
+@@ -2,7 +2,8 @@
+ // rules both the window's model menu (lib/agent.js, mods/chat-models) and the web app's use. Reading an agent's own
+ // settings and restarting it run where each side runs commands (lib/agent.js, service/agents.ts).
+ // Shared core: the source is core/agents.js; bin/sync-shared copies it into the mods in lib/COPIES.
+-export const NAMES = { claude: "Claude Code", codex: "Codex" };
++import { HERMES_NAME, hermesMenu, hermesArgv, hermesCurrent } from "./hermes.js"; // local: Hermes as the Assistant
++export const NAMES = { claude: "Claude Code", codex: "Codex", hermes: HERMES_NAME }; // local: hermes
+ 
+ // Claude Code's current models, as its /model menu offers them. `id` is what --model gets;
+ // `match` the names a running agent may report for it.
+@@ -59,6 +60,8 @@ export const DEFAULTS = `
+ if [ "$1" = claude ]; then
+   f="$HOME/.claude/settings.json"
+   command -v jq >/dev/null && [ -f "$f" ] && jq -r '"model\\t\\(.model // "")", "effort\\t\\(.effortLevel // "")", "fast\\t\\(if .fastMode == true then "on" else "" end)", "per\\t\\(.modelSettings // {} | with_entries(.value |= (.effortLevel // null)) | tojson)", "mode\\t\\(.permissions.defaultMode // "")"' "$f" 2>/dev/null
++elif [ "$1" = hermes ]; then # local: Hermes's default model (config.yaml model.default)
++  printf 'model\\t%s\\n' "$(awk '/^model:/ {f=1; next} f && /^[^ ]/ {exit} f && sub(/^  default:[ \\t]*/, "") {print; exit}' "$HOME/.hermes/config.yaml" 2>/dev/null)"
+ else
+   f="$HOME/.codex/config.toml"
+   for k in model model_reasoning_effort service_tier sandbox_mode approval_policy; do
+@@ -102,6 +105,7 @@ export function current(kind, argv, meta, dflt) {
+   argv = argv ?? [];
+   meta = meta ?? {};
+   dflt = dflt ?? {};
++  if (kind === "hermes") return hermesCurrent(argv, meta); // local: Hermes
+   if (kind === "claude") {
+     const alias = flag(argv, "--model") ?? dflt.model;
+     let fast = dflt.fast;
+@@ -149,6 +153,7 @@ export function contextWords(c) {
+ // offers (Codex: its own models_cache.json; Claude Code: its /model menu), the picker searches them.
+ // `dflt` is that agent's settings (defaults()); `current` its running model, kept in the list.
+ export function menuFor(agent, dflt, current = null) {
++  if (agent === "hermes") return hermesMenu(dflt, current); // local: Hermes
+   if (agent === "claude") {
+     const models = CLAUDE_MODELS.map((m) => ({ id: m.id, name: m.name, efforts: CLAUDE_EFFORTS,
+       defaultEffort: dflt?.per?.[m.match[1].replace(/\[1m\]$/, "")] ?? dflt?.effort ?? null, fast: m.id.startsWith("opus") }));
+@@ -164,7 +169,7 @@ export function menuFor(agent, dflt, current = null) {
+ 
+ // The levels a model typed by id gets: its agent's usual ones.
+ export function typedModel(agent, id) {
+-  return { id, name: agent === "claude" ? modelName(id) : id, efforts: agent === "claude" ? CLAUDE_EFFORTS : ["low", "medium", "high", "xhigh"], defaultEffort: null, fast: false, typed: true };
++  return { id, name: agent === "claude" ? modelName(id) : id, efforts: agent === "claude" ? CLAUDE_EFFORTS : agent === "hermes" ? [] : ["low", "medium", "high", "xhigh"], defaultEffort: null, fast: false, typed: true }; // local: hermes has none
+ }
+ 
+ // The person's picks in the model menus (the window's and the web's alike), in PICKS_FILE under the
+@@ -322,6 +327,7 @@ export function freshArgv(kind, argv) {
+ // How to start the chosen agent: { argv, resume } (resume: argv already continues the session).
+ // `session`: the old conversation's id when it can be resumed (same agent only).
+ export function argvFor(pick, old) {
++  if (pick.agent === "hermes") { const a = hermesArgv(pick); return { argv: a, resume: false, base: a }; } // local: Hermes (a restart hands off)
+   const same = pick.agent === old.agent;
+   const flags = same ? kept(pick.agent, old.argv ?? []) : [];
+   if (pick.agent === "claude") {
+diff --git a/mods/coordinator/core/hermes.js b/mods/coordinator/core/hermes.js
+new file mode 100644
+index 00000000..ada25c83
+--- /dev/null
++++ b/mods/coordinator/core/hermes.js
+@@ -0,0 +1,267 @@
++// local: Hermes Agent (github.com/NousResearch/hermes-agent) in the chat, beside Claude Code and Codex.
++// Kept in its own file so upstream updates rarely conflict; core/chat-log.js and core/chat-reader.js only hook it in.
++//
++// Hermes keeps every session in one SQLite file (~/.hermes/state.db, or a profile's), not a log per session, and
++// names which process runs a session in ~/.hermes/runtime/active_sessions.json ({ entries: [{ pid, started_at }] })
++// under an id the database doesn't use, so the session is matched by its start time. Its "log path" is
++// "<state.db>#<session id>", and a message's row id stands in for the byte offset Claude Code's and Codex's logs use.
++
++// A Hermes terminal: Herdr reports no app for it (no hook integration), and its foreground is Hermes's own python.
++export function isHermes(t) {
++  const argv = t?.foreground?.argv ?? [];
++  return t?.foreground?.name === "hermes" || argv.some((a) => /hermes-agent|hermes_cli/.test(String(a)));
++}
++
++// FIND's Hermes branch (args: kind pid): prints "<db>#<session>", "pending" (no messages yet), or nothing.
++// shortcut: matched by start time (within 10 s), not an exact id; two Hermes started in the same moment could swap. Use an exact id if Hermes ever stores one.
++// shortcut: found once per process; a /new or /resume inside the same Hermes keeps showing the first session until it restarts.
++export const HERMES_FIND = String.raw`
++if [ "$kind" = hermes ]; then
++python3 -I - "$pid" <<'PY'
++import glob, json, os, sqlite3, subprocess, sys
++def kids(p):
++    out = subprocess.run(["pgrep", "-P", p], capture_output=True, text=True).stdout.split()
++    return [k for c in out for k in [c, *kids(c)]]
++pids = {sys.argv[1], *kids(sys.argv[1])}
++root = os.path.expanduser("~/.hermes")
++try:
++    entries = json.load(open(os.path.join(root, "runtime", "active_sessions.json"))).get("entries", [])
++except Exception:
++    entries = []
++mine = sorted((e for e in entries if str(e.get("pid")) in pids), key=lambda e: e.get("updated_at") or 0)
++if not mine:
++    sys.exit()
++# Hermes 0.23 names the database's id ("local-…") in the registry: exact. Older ones named another id, so
++# then the session row that started within a moment of the registry entry is it.
++ids = [str(x) for x in ((mine[-1].get("metadata") or {}).get("live_session_id"), mine[-1].get("session_id")) if x]
++at = float(mine[-1].get("started_at") or 0)
++best = None
++dbs = [os.path.join(root, "state.db"), *glob.glob(os.path.join(root, "profiles", "*", "state.db"))]
++for db in dbs:
++    try:
++        con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
++        for sid in ids:
++            if con.execute("select 1 from sessions where id=?", (sid,)).fetchone():
++                has = con.execute("select 1 from messages where session_id=? limit 1", (sid,)).fetchone()
++                print("%s#%s" % (db, sid) if has else "pending"); sys.exit()
++    except sqlite3.Error:
++        pass
++for db in dbs:
++    try:
++        con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
++        for sid, started in con.execute("select id, started_at from sessions where started_at between ? and ?", (at - 10, at + 10)).fetchall():
++            if best is None or abs(started - at) < best[0]:
++                best = (abs(started - at), db, sid, con.execute("select 1 from messages where session_id=? limit 1", (sid,)).fetchone())
++    except sqlite3.Error:
++        pass
++if best and best[3]:
++    print("%s#%s" % (best[1], best[2])); sys.exit()
++print("pending")
++PY
++exit 0
++fi
++`;
++
++// LOG's Hermes branch, for a "<db>#<session>" path (args: mode path ...), answering as LOG does for a file:
++//   tail <path> <from>          "T <size> <from> <end>" and the rows from id <from>
++//   page <path> <before> <want> "P <start> <end>" and about <want> rows before id <before> (start 0: the first)
++//   results <path> <id>...      each tool row's output, as {"payload":{"output":…}} (resultText reads it)
++// A row comes back as "<id>\tJ\t<json>", a tool's result as "<id>\tR\t <call id>".
++export const HERMES_LOG = String.raw`
++case "$f" in *'#'*)
++python3 -I - "$@" <<'PY'
++import json, sqlite3, sys
++mode, f, *rest = sys.argv[1:]
++db, sid = f.rsplit("#", 1)
++try:
++    con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
++    con.execute("select 1 from messages limit 1")
++except sqlite3.Error:
++    print("missing"); sys.exit()
++COLS = "id, role, content, tool_calls, tool_call_id, tool_name, timestamp, finish_reason, reasoning, display_kind"
++def rows(where, args, order="asc", limit=-1):
++    q = "select %s from messages where session_id=? and coalesce(active, 1)=1 and %s order by id %s limit ?" % (COLS, where, order)
++    return con.execute(q, (sid, *args, limit)).fetchall()
++def emit(r):
++    i, role, content, calls, call_id, tool, ts, finish, reasoning, kind = r
++    if role == "tool":
++        # A call that failed (a non-zero exit, or an error): said before its result, for the step's mark.
++        try:
++            out = json.loads(content or "")
++        except ValueError:
++            out = None
++        # A clarify question's end: answered (what was picked or typed) or cancelled.
++        if tool == "clarify" and isinstance(out, dict) and isinstance(out.get("responses"), list):
++            said = [str(x.get("user_response")) for x in out["responses"] if isinstance(x, dict) and x.get("user_response")]
++            done = {"hermes": 1, "role": "clarify_done", "call_id": call_id, "outcome": out.get("outcome"), "answers": said}
++            print("%d\tJ\t%s" % (i, json.dumps(done, ensure_ascii=False)))
++        if isinstance(out, dict) and (out.get("exit_code") not in (None, 0) or out.get("error")):
++            fail = {"hermes": 1, "role": "tool_failed", "call_id": call_id, "exit": out.get("exit_code")}
++            print("%d\tJ\t%s" % (i, json.dumps(fail)))
++        print("%d\tR\t %s" % (i, call_id or "")); return
++    try:
++        calls = json.loads(calls) if calls else None
++    except ValueError:
++        calls = None
++    rec = {"hermes": 1, "role": role, "content": (content or "")[:200000], "tool_calls": calls, "ts": ts,
++           "finish": finish, "thinking": bool(reasoning), "display_kind": kind}
++    print("%d\tJ\t%s" % (i, json.dumps(rec, ensure_ascii=False)))
++top = (con.execute("select max(id) from messages where session_id=?", (sid,)).fetchone()[0] or -1) + 1
++if mode == "tail":
++    o = int(rest[0])
++    got = rows("id >= ?", (o,))
++    print("T %d %d %d" % (max(top, o), o, got[-1][0] + 1 if got else o))
++    for r in got: emit(r)
++elif mode == "page":
++    before, want = int(rest[0]), int(rest[1])
++    e = min(before, top) if top > 0 else 0
++    got = rows("id < ?", (e,), "desc", want)[::-1]
++    a = got[0][0] if got else 0
++    if got and not con.execute("select 1 from messages where session_id=? and id < ? limit 1", (sid, a)).fetchone():
++        a = 0
++    print("P %d %d" % (a, e))
++    for r in got: emit(r)
++elif mode == "results":
++    for o in rest:
++        r = con.execute("select content from messages where id=?", (int(o),)).fetchone()
++        out = (r[0] if r else "") or ""
++        try:
++            j = json.loads(out)
++            if isinstance(j, dict) and "output" in j:
++                out = str(j.get("output") or j.get("error") or "")
++        except ValueError:
++            pass
++        sys.stdout.write("\x1e%s\n%s\n" % (o, json.dumps({"payload": {"output": out[:65536]}}, ensure_ascii=False)))
++PY
++exit 0;;
++esac
++`;
++
++const clip = (s, n = 80) => { s = String(s ?? "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
++const base = (p) => String(p ?? "").split("/").filter(Boolean).pop() ?? "";
++const first = (c) => clip(String(c ?? "").replace(/^(cd [^&;]+(&&|;)\s*)+/, "").split(/\s*(?:&&|\|\||;|\|)\s*/)[0], 48);
++
++// One Hermes tool call as a chat step: { kind, line, doing }.
++export function hermesStep(name, a = {}) {
++  const path = a.path ?? a.file_path ?? "";
++  if (name === "terminal") return { kind: "run", line: `Ran ${clip(a.command)}`, doing: `Running ${first(a.command)}` };
++  if (name === "execute_code") return { kind: "run", line: "Ran a script", doing: "Running a script" };
++  if (name === "read_file") return { kind: "read", line: `Read ${base(path)}`, doing: `Reading ${base(path)}` };
++  if (name === "write_file" || name === "patch") return { kind: "edit", line: `Edited ${base(path)}`, doing: `Editing ${base(path)}` };
++  if (name === "search_files" || name === "session_search") return { kind: "search", line: `Searched ${clip(a.pattern ?? a.query, 50)}`, doing: "Searching" };
++  if (name === "web_search") return { kind: "web", line: `Searched the web: ${clip(a.query, 60)}`, doing: "Searching the web" };
++  if (name === "web_extract" || name.startsWith("browser_")) return { kind: "web", line: `Read ${clip((a.urls ?? [a.url]).filter(Boolean).join(", "), 60) || "a page"}`, doing: "Reading the web" };
++  if (name === "delegate_task") return { kind: "agent", line: `Asked a helper: ${clip(a.goal ?? a.task ?? a.prompt, 70)}`, doing: "Starting a helper" };
++  if (name === "todo") return { kind: "plan", line: "Updated its plan", doing: "Planning" };
++  return { kind: "tool", line: `Used ${name}`, doing: `Using ${name}` };
++}
++
++// Whether Hermes's screen shows these questions' picker at its first question, none answered yet:
++//   │ 2 questions │  │ ▸ Color? │  │   ❯ 1. Red (Recommended) │ ...  (box borders and wrapping taken out).
++export function hermesOnScreen(screen, questions) {
++  const s = String(screen ?? "").replace(/[│╭╮╰╯─]/g, " ").replace(/\s+/g, " ");
++  const q = questions?.[0], n = questions?.length ?? 0;
++  if (!q || !s.includes("needs your input")) return false;
++  const one = (w) => s.includes(String(w).replace(/\s+/g, " ").trim());
++  return one(`${n} question${n === 1 ? "" : "s"}`) && one(`▸ ${q.text}`) && !s.includes(`✓ ${q.text}`) && q.choices.every((c) => one(c.label));
++}
++
++// The keys that answer them on that picker: a choice's number answers its question and goes to the next (the last
++// one submits); "Other" is the number after the choices, then the words and Enter. -> [{ keys } | { paste }], or null.
++export function hermesSteps(questions, answers) {
++  if (!Array.isArray(answers) || answers.length !== questions.length) return null;
++  const steps = [];
++  for (const [i, q] of questions.entries()) {
++    const said = String(answers[i] ?? "").trim();
++    if (!said) return null;
++    const k = q.choices.findIndex((c) => c.label === said || c.label.replace(/\s*\(recommended\)\s*$/i, "") === said);
++    const pick = (n) => (n < 9 ? [String(n + 1)] : [...Array(n).fill("down"), "enter"]);
++    if (k >= 0) steps.push({ keys: pick(k) });
++    else steps.push({ keys: pick(q.choices.length) }, { paste: said });
++  }
++  return steps;
++}
++
++// Hermes's own rows that aren't the conversation (notices to the agent, model switches, hidden turns).
++const QUIET = new Set(["hidden", "internal_notification", "async_delegation_complete", "process_complete", "model_switch"]);
++
++// One record from HERMES_LOG into the conversation (conv: core/chat-log.js Conversation; cleanUser: its words cleaner).
++export function hermesFeed(conv, l, off, cleanUser) {
++  const at = Math.round((l.ts ?? 0) * 1000);
++  if (QUIET.has(l.display_kind)) return;
++  if (l.role === "user") {
++    const u = l.content ? cleanUser(l.content) : null;
++    if (u) conv.user(`u${off}`, { ...u, at });
++    return;
++  }
++  if (l.role === "clarify_done") {
++    const q = conv.questions.get(String(l.call_id ?? ""));
++    const said = (l.answers ?? []).filter(Boolean);
++    if (q && (l.outcome === "submitted" || said.length)) q.closed = "answered";
++    // The answer as the person's own message right after the question, as Claude Code's (Conversation.answers()).
++    if (said.length) { conv.waiting = false; conv.push({ kind: "user", id: `ua${off}`, text: said.join("\n\n"), at, answer: true }); }
++    return;
++  }
++  if (l.role === "tool_failed") {
++    const s = conv.calls.get(String(l.call_id ?? ""));
++    if (s) { s.failed = true; s.line += l.exit != null ? ` (exit ${l.exit})` : " (failed)"; }
++    return;
++  }
++  if (l.role !== "assistant") return;
++  if (l.display_kind === "failed_turn") { conv.push({ kind: "error", id: `e${off}`, text: l.content || "The turn failed." }); conv.open.clear(); conv.doing = null; return; }
++  const said = conv.agentText(l.content ?? "");
++  if (said) conv.push({ kind: "agent", id: `a${off}`, text: said, at });
++  for (const c of Array.isArray(l.tool_calls) ? l.tool_calls : []) {
++    const id = String(c?.call_id ?? c?.id ?? `c${off}`);
++    const name = String(c?.function?.name ?? "tool");
++    let a = c?.function?.arguments;
++    try { a = typeof a === "string" ? JSON.parse(a) : a; } catch { a = {}; }
++    a = a && typeof a === "object" ? a : {};
++    if (name === "clarify") {
++      // Hermes 0.23: { questions: [{ question, choices }] }; before: { question, choices }.
++      const qs = Array.isArray(a.questions) ? a.questions : [a];
++      const text = qs.map((q) => [q?.question, ...(Array.isArray(q?.choices) ? q.choices.map((o) => `- ${o}`) : [])].filter(Boolean).join("\n"))
++        .filter(Boolean).join("\n\n");
++      // As Codex's (core/asks.js codexQuestions): the chat's question card answers them on Hermes's screen.
++      const questions = qs.map((q) => ({ text: String(q?.question ?? ""), header: "",
++        choices: (Array.isArray(q?.choices) ? q.choices : []).map((c) => ({ label: String(c) })).filter((c) => c.label) })).filter((q) => q.text);
++      if (text) conv.asked(id, { kind: "ask", id: `q${off}`, text, ...(questions.length ? { questions } : {}) });
++      conv.open.set(id, "Asking you something");
++      conv.doing = "Asking you something";
++      continue;
++    }
++    const st = hermesStep(name, a);
++    st.at = at || Date.now();
++    conv.step(id, off, st, name === "delegate_task" ? id : null);
++    if (name === "terminal") conv.sent(String(a.command ?? ""), off, at);
++  }
++  if (!said && !l.tool_calls?.length && l.thinking && !conv.open.size) conv.doing = "Thinking";
++  // A reply that ends the turn: nothing is running any more.
++  if (l.finish === "stop" && !l.tool_calls?.length) { conv.open.clear(); conv.waits.clear(); conv.waiting = false; conv.doing = null; }
++}
++
++// ---- Hermes as the Assistant (HS-1): Settings and the New space dialog offer it for the Assistant only (workers keep
++// Claude Code and Codex); core/agents.js and lib/settings.js hook these in.
++export const HERMES_NAME = "Hermes";
++// Auto: Hermes asks only for a command its guards find risky, and herdr-setup's bin/apply allowlists Herdr's own
++// (herdr-task, hc, herdr-artifact, herdr-secret, read-only git) in ~/.hermes/config.yaml, so those never stop it: the
++// chat has no approval cards for Hermes. Full access: --yolo.
++export const HERMES_PERMS = [{ id: "auto", label: "Auto" }, { id: "full", label: "Full access" }];
++// Its model: Hermes's own default (config.yaml model.default, read by core/agents.js DEFAULTS), or one typed by id (-m).
++export function hermesMenu(dflt, current = null) {
++  const models = [{ id: "default", name: dflt?.model ? `Default (${dflt.model})` : "Hermes default", efforts: [], defaultEffort: null, fast: false }];
++  if (current && current !== "default") models.unshift({ id: current, name: current, efforts: [], defaultEffort: null, fast: false });
++  return { name: HERMES_NAME, perms: HERMES_PERMS, models };
++}
++// How to start it from a role's settings { model, perm }.
++export function hermesArgv(pick) {
++  return ["hermes", ...(pick?.model && pick.model !== "default" ? ["-m", pick.model] : []), ...(pick?.perm === "full" ? ["--yolo"] : [])];
++}
++// What a Hermes runs on, as core/agents.js current() says it for the others.
++export function hermesCurrent(argv, meta) {
++  const i = Math.max(argv.lastIndexOf("-m"), argv.lastIndexOf("--model"));
++  return { agent: "hermes", model: meta?.model ?? (i >= 0 ? argv[i + 1] : null) ?? "default", effort: null, fast: false,
++    perm: argv.includes("--yolo") ? "full" : "auto", used: meta?.used ?? null, window: meta?.window ?? null };
++}
++// What a worker or reviewer is offered: the same, without Hermes.
++export const withoutHermes = (data) => (data?.menus?.hermes ? { ...data, menus: Object.fromEntries(Object.entries(data.menus).filter(([k]) => k !== "hermes")) } : data);
+diff --git a/mods/newspace/core/agents.js b/mods/newspace/core/agents.js
+index 572c3762..24a2bd3a 100644
+--- a/mods/newspace/core/agents.js
++++ b/mods/newspace/core/agents.js
+@@ -2,7 +2,8 @@
+ // rules both the window's model menu (lib/agent.js, mods/chat-models) and the web app's use. Reading an agent's own
+ // settings and restarting it run where each side runs commands (lib/agent.js, service/agents.ts).
+ // Shared core: the source is core/agents.js; bin/sync-shared copies it into the mods in lib/COPIES.
+-export const NAMES = { claude: "Claude Code", codex: "Codex" };
++import { HERMES_NAME, hermesMenu, hermesArgv, hermesCurrent } from "./hermes.js"; // local: Hermes as the Assistant
++export const NAMES = { claude: "Claude Code", codex: "Codex", hermes: HERMES_NAME }; // local: hermes
+ 
+ // Claude Code's current models, as its /model menu offers them. `id` is what --model gets;
+ // `match` the names a running agent may report for it.
+@@ -59,6 +60,8 @@ export const DEFAULTS = `
+ if [ "$1" = claude ]; then
+   f="$HOME/.claude/settings.json"
+   command -v jq >/dev/null && [ -f "$f" ] && jq -r '"model\\t\\(.model // "")", "effort\\t\\(.effortLevel // "")", "fast\\t\\(if .fastMode == true then "on" else "" end)", "per\\t\\(.modelSettings // {} | with_entries(.value |= (.effortLevel // null)) | tojson)", "mode\\t\\(.permissions.defaultMode // "")"' "$f" 2>/dev/null
++elif [ "$1" = hermes ]; then # local: Hermes's default model (config.yaml model.default)
++  printf 'model\\t%s\\n' "$(awk '/^model:/ {f=1; next} f && /^[^ ]/ {exit} f && sub(/^  default:[ \\t]*/, "") {print; exit}' "$HOME/.hermes/config.yaml" 2>/dev/null)"
+ else
+   f="$HOME/.codex/config.toml"
+   for k in model model_reasoning_effort service_tier sandbox_mode approval_policy; do
+@@ -102,6 +105,7 @@ export function current(kind, argv, meta, dflt) {
+   argv = argv ?? [];
+   meta = meta ?? {};
+   dflt = dflt ?? {};
++  if (kind === "hermes") return hermesCurrent(argv, meta); // local: Hermes
+   if (kind === "claude") {
+     const alias = flag(argv, "--model") ?? dflt.model;
+     let fast = dflt.fast;
+@@ -149,6 +153,7 @@ export function contextWords(c) {
+ // offers (Codex: its own models_cache.json; Claude Code: its /model menu), the picker searches them.
+ // `dflt` is that agent's settings (defaults()); `current` its running model, kept in the list.
+ export function menuFor(agent, dflt, current = null) {
++  if (agent === "hermes") return hermesMenu(dflt, current); // local: Hermes
+   if (agent === "claude") {
+     const models = CLAUDE_MODELS.map((m) => ({ id: m.id, name: m.name, efforts: CLAUDE_EFFORTS,
+       defaultEffort: dflt?.per?.[m.match[1].replace(/\[1m\]$/, "")] ?? dflt?.effort ?? null, fast: m.id.startsWith("opus") }));
+@@ -164,7 +169,7 @@ export function menuFor(agent, dflt, current = null) {
+ 
+ // The levels a model typed by id gets: its agent's usual ones.
+ export function typedModel(agent, id) {
+-  return { id, name: agent === "claude" ? modelName(id) : id, efforts: agent === "claude" ? CLAUDE_EFFORTS : ["low", "medium", "high", "xhigh"], defaultEffort: null, fast: false, typed: true };
++  return { id, name: agent === "claude" ? modelName(id) : id, efforts: agent === "claude" ? CLAUDE_EFFORTS : agent === "hermes" ? [] : ["low", "medium", "high", "xhigh"], defaultEffort: null, fast: false, typed: true }; // local: hermes has none
+ }
+ 
+ // The person's picks in the model menus (the window's and the web's alike), in PICKS_FILE under the
+@@ -322,6 +327,7 @@ export function freshArgv(kind, argv) {
+ // How to start the chosen agent: { argv, resume } (resume: argv already continues the session).
+ // `session`: the old conversation's id when it can be resumed (same agent only).
+ export function argvFor(pick, old) {
++  if (pick.agent === "hermes") { const a = hermesArgv(pick); return { argv: a, resume: false, base: a }; } // local: Hermes (a restart hands off)
+   const same = pick.agent === old.agent;
+   const flags = same ? kept(pick.agent, old.argv ?? []) : [];
+   if (pick.agent === "claude") {
+diff --git a/mods/newspace/core/hermes.js b/mods/newspace/core/hermes.js
+new file mode 100644
+index 00000000..ada25c83
+--- /dev/null
++++ b/mods/newspace/core/hermes.js
+@@ -0,0 +1,267 @@
++// local: Hermes Agent (github.com/NousResearch/hermes-agent) in the chat, beside Claude Code and Codex.
++// Kept in its own file so upstream updates rarely conflict; core/chat-log.js and core/chat-reader.js only hook it in.
++//
++// Hermes keeps every session in one SQLite file (~/.hermes/state.db, or a profile's), not a log per session, and
++// names which process runs a session in ~/.hermes/runtime/active_sessions.json ({ entries: [{ pid, started_at }] })
++// under an id the database doesn't use, so the session is matched by its start time. Its "log path" is
++// "<state.db>#<session id>", and a message's row id stands in for the byte offset Claude Code's and Codex's logs use.
++
++// A Hermes terminal: Herdr reports no app for it (no hook integration), and its foreground is Hermes's own python.
++export function isHermes(t) {
++  const argv = t?.foreground?.argv ?? [];
++  return t?.foreground?.name === "hermes" || argv.some((a) => /hermes-agent|hermes_cli/.test(String(a)));
++}
++
++// FIND's Hermes branch (args: kind pid): prints "<db>#<session>", "pending" (no messages yet), or nothing.
++// shortcut: matched by start time (within 10 s), not an exact id; two Hermes started in the same moment could swap. Use an exact id if Hermes ever stores one.
++// shortcut: found once per process; a /new or /resume inside the same Hermes keeps showing the first session until it restarts.
++export const HERMES_FIND = String.raw`
++if [ "$kind" = hermes ]; then
++python3 -I - "$pid" <<'PY'
++import glob, json, os, sqlite3, subprocess, sys
++def kids(p):
++    out = subprocess.run(["pgrep", "-P", p], capture_output=True, text=True).stdout.split()
++    return [k for c in out for k in [c, *kids(c)]]
++pids = {sys.argv[1], *kids(sys.argv[1])}
++root = os.path.expanduser("~/.hermes")
++try:
++    entries = json.load(open(os.path.join(root, "runtime", "active_sessions.json"))).get("entries", [])
++except Exception:
++    entries = []
++mine = sorted((e for e in entries if str(e.get("pid")) in pids), key=lambda e: e.get("updated_at") or 0)
++if not mine:
++    sys.exit()
++# Hermes 0.23 names the database's id ("local-…") in the registry: exact. Older ones named another id, so
++# then the session row that started within a moment of the registry entry is it.
++ids = [str(x) for x in ((mine[-1].get("metadata") or {}).get("live_session_id"), mine[-1].get("session_id")) if x]
++at = float(mine[-1].get("started_at") or 0)
++best = None
++dbs = [os.path.join(root, "state.db"), *glob.glob(os.path.join(root, "profiles", "*", "state.db"))]
++for db in dbs:
++    try:
++        con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
++        for sid in ids:
++            if con.execute("select 1 from sessions where id=?", (sid,)).fetchone():
++                has = con.execute("select 1 from messages where session_id=? limit 1", (sid,)).fetchone()
++                print("%s#%s" % (db, sid) if has else "pending"); sys.exit()
++    except sqlite3.Error:
++        pass
++for db in dbs:
++    try:
++        con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
++        for sid, started in con.execute("select id, started_at from sessions where started_at between ? and ?", (at - 10, at + 10)).fetchall():
++            if best is None or abs(started - at) < best[0]:
++                best = (abs(started - at), db, sid, con.execute("select 1 from messages where session_id=? limit 1", (sid,)).fetchone())
++    except sqlite3.Error:
++        pass
++if best and best[3]:
++    print("%s#%s" % (best[1], best[2])); sys.exit()
++print("pending")
++PY
++exit 0
++fi
++`;
++
++// LOG's Hermes branch, for a "<db>#<session>" path (args: mode path ...), answering as LOG does for a file:
++//   tail <path> <from>          "T <size> <from> <end>" and the rows from id <from>
++//   page <path> <before> <want> "P <start> <end>" and about <want> rows before id <before> (start 0: the first)
++//   results <path> <id>...      each tool row's output, as {"payload":{"output":…}} (resultText reads it)
++// A row comes back as "<id>\tJ\t<json>", a tool's result as "<id>\tR\t <call id>".
++export const HERMES_LOG = String.raw`
++case "$f" in *'#'*)
++python3 -I - "$@" <<'PY'
++import json, sqlite3, sys
++mode, f, *rest = sys.argv[1:]
++db, sid = f.rsplit("#", 1)
++try:
++    con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
++    con.execute("select 1 from messages limit 1")
++except sqlite3.Error:
++    print("missing"); sys.exit()
++COLS = "id, role, content, tool_calls, tool_call_id, tool_name, timestamp, finish_reason, reasoning, display_kind"
++def rows(where, args, order="asc", limit=-1):
++    q = "select %s from messages where session_id=? and coalesce(active, 1)=1 and %s order by id %s limit ?" % (COLS, where, order)
++    return con.execute(q, (sid, *args, limit)).fetchall()
++def emit(r):
++    i, role, content, calls, call_id, tool, ts, finish, reasoning, kind = r
++    if role == "tool":
++        # A call that failed (a non-zero exit, or an error): said before its result, for the step's mark.
++        try:
++            out = json.loads(content or "")
++        except ValueError:
++            out = None
++        # A clarify question's end: answered (what was picked or typed) or cancelled.
++        if tool == "clarify" and isinstance(out, dict) and isinstance(out.get("responses"), list):
++            said = [str(x.get("user_response")) for x in out["responses"] if isinstance(x, dict) and x.get("user_response")]
++            done = {"hermes": 1, "role": "clarify_done", "call_id": call_id, "outcome": out.get("outcome"), "answers": said}
++            print("%d\tJ\t%s" % (i, json.dumps(done, ensure_ascii=False)))
++        if isinstance(out, dict) and (out.get("exit_code") not in (None, 0) or out.get("error")):
++            fail = {"hermes": 1, "role": "tool_failed", "call_id": call_id, "exit": out.get("exit_code")}
++            print("%d\tJ\t%s" % (i, json.dumps(fail)))
++        print("%d\tR\t %s" % (i, call_id or "")); return
++    try:
++        calls = json.loads(calls) if calls else None
++    except ValueError:
++        calls = None
++    rec = {"hermes": 1, "role": role, "content": (content or "")[:200000], "tool_calls": calls, "ts": ts,
++           "finish": finish, "thinking": bool(reasoning), "display_kind": kind}
++    print("%d\tJ\t%s" % (i, json.dumps(rec, ensure_ascii=False)))
++top = (con.execute("select max(id) from messages where session_id=?", (sid,)).fetchone()[0] or -1) + 1
++if mode == "tail":
++    o = int(rest[0])
++    got = rows("id >= ?", (o,))
++    print("T %d %d %d" % (max(top, o), o, got[-1][0] + 1 if got else o))
++    for r in got: emit(r)
++elif mode == "page":
++    before, want = int(rest[0]), int(rest[1])
++    e = min(before, top) if top > 0 else 0
++    got = rows("id < ?", (e,), "desc", want)[::-1]
++    a = got[0][0] if got else 0
++    if got and not con.execute("select 1 from messages where session_id=? and id < ? limit 1", (sid, a)).fetchone():
++        a = 0
++    print("P %d %d" % (a, e))
++    for r in got: emit(r)
++elif mode == "results":
++    for o in rest:
++        r = con.execute("select content from messages where id=?", (int(o),)).fetchone()
++        out = (r[0] if r else "") or ""
++        try:
++            j = json.loads(out)
++            if isinstance(j, dict) and "output" in j:
++                out = str(j.get("output") or j.get("error") or "")
++        except ValueError:
++            pass
++        sys.stdout.write("\x1e%s\n%s\n" % (o, json.dumps({"payload": {"output": out[:65536]}}, ensure_ascii=False)))
++PY
++exit 0;;
++esac
++`;
++
++const clip = (s, n = 80) => { s = String(s ?? "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
++const base = (p) => String(p ?? "").split("/").filter(Boolean).pop() ?? "";
++const first = (c) => clip(String(c ?? "").replace(/^(cd [^&;]+(&&|;)\s*)+/, "").split(/\s*(?:&&|\|\||;|\|)\s*/)[0], 48);
++
++// One Hermes tool call as a chat step: { kind, line, doing }.
++export function hermesStep(name, a = {}) {
++  const path = a.path ?? a.file_path ?? "";
++  if (name === "terminal") return { kind: "run", line: `Ran ${clip(a.command)}`, doing: `Running ${first(a.command)}` };
++  if (name === "execute_code") return { kind: "run", line: "Ran a script", doing: "Running a script" };
++  if (name === "read_file") return { kind: "read", line: `Read ${base(path)}`, doing: `Reading ${base(path)}` };
++  if (name === "write_file" || name === "patch") return { kind: "edit", line: `Edited ${base(path)}`, doing: `Editing ${base(path)}` };
++  if (name === "search_files" || name === "session_search") return { kind: "search", line: `Searched ${clip(a.pattern ?? a.query, 50)}`, doing: "Searching" };
++  if (name === "web_search") return { kind: "web", line: `Searched the web: ${clip(a.query, 60)}`, doing: "Searching the web" };
++  if (name === "web_extract" || name.startsWith("browser_")) return { kind: "web", line: `Read ${clip((a.urls ?? [a.url]).filter(Boolean).join(", "), 60) || "a page"}`, doing: "Reading the web" };
++  if (name === "delegate_task") return { kind: "agent", line: `Asked a helper: ${clip(a.goal ?? a.task ?? a.prompt, 70)}`, doing: "Starting a helper" };
++  if (name === "todo") return { kind: "plan", line: "Updated its plan", doing: "Planning" };
++  return { kind: "tool", line: `Used ${name}`, doing: `Using ${name}` };
++}
++
++// Whether Hermes's screen shows these questions' picker at its first question, none answered yet:
++//   │ 2 questions │  │ ▸ Color? │  │   ❯ 1. Red (Recommended) │ ...  (box borders and wrapping taken out).
++export function hermesOnScreen(screen, questions) {
++  const s = String(screen ?? "").replace(/[│╭╮╰╯─]/g, " ").replace(/\s+/g, " ");
++  const q = questions?.[0], n = questions?.length ?? 0;
++  if (!q || !s.includes("needs your input")) return false;
++  const one = (w) => s.includes(String(w).replace(/\s+/g, " ").trim());
++  return one(`${n} question${n === 1 ? "" : "s"}`) && one(`▸ ${q.text}`) && !s.includes(`✓ ${q.text}`) && q.choices.every((c) => one(c.label));
++}
++
++// The keys that answer them on that picker: a choice's number answers its question and goes to the next (the last
++// one submits); "Other" is the number after the choices, then the words and Enter. -> [{ keys } | { paste }], or null.
++export function hermesSteps(questions, answers) {
++  if (!Array.isArray(answers) || answers.length !== questions.length) return null;
++  const steps = [];
++  for (const [i, q] of questions.entries()) {
++    const said = String(answers[i] ?? "").trim();
++    if (!said) return null;
++    const k = q.choices.findIndex((c) => c.label === said || c.label.replace(/\s*\(recommended\)\s*$/i, "") === said);
++    const pick = (n) => (n < 9 ? [String(n + 1)] : [...Array(n).fill("down"), "enter"]);
++    if (k >= 0) steps.push({ keys: pick(k) });
++    else steps.push({ keys: pick(q.choices.length) }, { paste: said });
++  }
++  return steps;
++}
++
++// Hermes's own rows that aren't the conversation (notices to the agent, model switches, hidden turns).
++const QUIET = new Set(["hidden", "internal_notification", "async_delegation_complete", "process_complete", "model_switch"]);
++
++// One record from HERMES_LOG into the conversation (conv: core/chat-log.js Conversation; cleanUser: its words cleaner).
++export function hermesFeed(conv, l, off, cleanUser) {
++  const at = Math.round((l.ts ?? 0) * 1000);
++  if (QUIET.has(l.display_kind)) return;
++  if (l.role === "user") {
++    const u = l.content ? cleanUser(l.content) : null;
++    if (u) conv.user(`u${off}`, { ...u, at });
++    return;
++  }
++  if (l.role === "clarify_done") {
++    const q = conv.questions.get(String(l.call_id ?? ""));
++    const said = (l.answers ?? []).filter(Boolean);
++    if (q && (l.outcome === "submitted" || said.length)) q.closed = "answered";
++    // The answer as the person's own message right after the question, as Claude Code's (Conversation.answers()).
++    if (said.length) { conv.waiting = false; conv.push({ kind: "user", id: `ua${off}`, text: said.join("\n\n"), at, answer: true }); }
++    return;
++  }
++  if (l.role === "tool_failed") {
++    const s = conv.calls.get(String(l.call_id ?? ""));
++    if (s) { s.failed = true; s.line += l.exit != null ? ` (exit ${l.exit})` : " (failed)"; }
++    return;
++  }
++  if (l.role !== "assistant") return;
++  if (l.display_kind === "failed_turn") { conv.push({ kind: "error", id: `e${off}`, text: l.content || "The turn failed." }); conv.open.clear(); conv.doing = null; return; }
++  const said = conv.agentText(l.content ?? "");
++  if (said) conv.push({ kind: "agent", id: `a${off}`, text: said, at });
++  for (const c of Array.isArray(l.tool_calls) ? l.tool_calls : []) {
++    const id = String(c?.call_id ?? c?.id ?? `c${off}`);
++    const name = String(c?.function?.name ?? "tool");
++    let a = c?.function?.arguments;
++    try { a = typeof a === "string" ? JSON.parse(a) : a; } catch { a = {}; }
++    a = a && typeof a === "object" ? a : {};
++    if (name === "clarify") {
++      // Hermes 0.23: { questions: [{ question, choices }] }; before: { question, choices }.
++      const qs = Array.isArray(a.questions) ? a.questions : [a];
++      const text = qs.map((q) => [q?.question, ...(Array.isArray(q?.choices) ? q.choices.map((o) => `- ${o}`) : [])].filter(Boolean).join("\n"))
++        .filter(Boolean).join("\n\n");
++      // As Codex's (core/asks.js codexQuestions): the chat's question card answers them on Hermes's screen.
++      const questions = qs.map((q) => ({ text: String(q?.question ?? ""), header: "",
++        choices: (Array.isArray(q?.choices) ? q.choices : []).map((c) => ({ label: String(c) })).filter((c) => c.label) })).filter((q) => q.text);
++      if (text) conv.asked(id, { kind: "ask", id: `q${off}`, text, ...(questions.length ? { questions } : {}) });
++      conv.open.set(id, "Asking you something");
++      conv.doing = "Asking you something";
++      continue;
++    }
++    const st = hermesStep(name, a);
++    st.at = at || Date.now();
++    conv.step(id, off, st, name === "delegate_task" ? id : null);
++    if (name === "terminal") conv.sent(String(a.command ?? ""), off, at);
++  }
++  if (!said && !l.tool_calls?.length && l.thinking && !conv.open.size) conv.doing = "Thinking";
++  // A reply that ends the turn: nothing is running any more.
++  if (l.finish === "stop" && !l.tool_calls?.length) { conv.open.clear(); conv.waits.clear(); conv.waiting = false; conv.doing = null; }
++}
++
++// ---- Hermes as the Assistant (HS-1): Settings and the New space dialog offer it for the Assistant only (workers keep
++// Claude Code and Codex); core/agents.js and lib/settings.js hook these in.
++export const HERMES_NAME = "Hermes";
++// Auto: Hermes asks only for a command its guards find risky, and herdr-setup's bin/apply allowlists Herdr's own
++// (herdr-task, hc, herdr-artifact, herdr-secret, read-only git) in ~/.hermes/config.yaml, so those never stop it: the
++// chat has no approval cards for Hermes. Full access: --yolo.
++export const HERMES_PERMS = [{ id: "auto", label: "Auto" }, { id: "full", label: "Full access" }];
++// Its model: Hermes's own default (config.yaml model.default, read by core/agents.js DEFAULTS), or one typed by id (-m).
++export function hermesMenu(dflt, current = null) {
++  const models = [{ id: "default", name: dflt?.model ? `Default (${dflt.model})` : "Hermes default", efforts: [], defaultEffort: null, fast: false }];
++  if (current && current !== "default") models.unshift({ id: current, name: current, efforts: [], defaultEffort: null, fast: false });
++  return { name: HERMES_NAME, perms: HERMES_PERMS, models };
++}
++// How to start it from a role's settings { model, perm }.
++export function hermesArgv(pick) {
++  return ["hermes", ...(pick?.model && pick.model !== "default" ? ["-m", pick.model] : []), ...(pick?.perm === "full" ? ["--yolo"] : [])];
++}
++// What a Hermes runs on, as core/agents.js current() says it for the others.
++export function hermesCurrent(argv, meta) {
++  const i = Math.max(argv.lastIndexOf("-m"), argv.lastIndexOf("--model"));
++  return { agent: "hermes", model: meta?.model ?? (i >= 0 ? argv[i + 1] : null) ?? "default", effort: null, fast: false,
++    perm: argv.includes("--yolo") ? "full" : "auto", used: meta?.used ?? null, window: meta?.window ?? null };
++}
++// What a worker or reviewer is offered: the same, without Hermes.
++export const withoutHermes = (data) => (data?.menus?.hermes ? { ...data, menus: Object.fromEntries(Object.entries(data.menus).filter(([k]) => k !== "hermes")) } : data);
+diff --git a/mods/newspace/settings.js b/mods/newspace/settings.js
+index caf18c66..8d0d6b2d 100644
+--- a/mods/newspace/settings.js
++++ b/mods/newspace/settings.js
+@@ -20,6 +20,7 @@ import * as fs from "fs/promises";
+ import * as agent from "./agent.js";
+ // The button's words and the choices on offer: core/settings.js, shared with the web app's Settings.
+ import { modelLabel, choicesFrom } from "./core/settings.js";
++import { menuFor } from "./core/agents.js"; // local: Hermes
+ 
+ const ROW = 31, LABEL = 110;
+ const LEVEL = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra", none: "None" };
+@@ -34,6 +35,12 @@ export async function loadChoices(machine = null) {
+   const installed = Object.fromEntries(["claude", "codex"].map((k) => [k, prog(k) ? prog(k).installed !== false : k === "claude"]));
+   const icons = Object.fromEntries(["claude", "codex"].map((k) => [k, { icon: prog(k)?.icon ?? null, tint: Boolean(prog(k)?.tint) }]));
+   const { menus, permDefault, defaults } = choicesFrom({ claude, codex }, installed);
++  // local: Hermes too when installed, for the Assistant only (Settings and the chat drop it for other roles: withoutHermes)
++  if (prog("hermes") && prog("hermes").installed !== false) {
++    menus.hermes = menuFor("hermes", await agent.defaults("hermes", machine));
++    permDefault.hermes = "auto";
++    icons.hermes = { icon: prog("hermes").icon ?? null, tint: Boolean(prog("hermes").tint) };
++  }
+   return { menus, icons, installed, permDefault, defaults };
+ }
+ 
+diff --git a/mods/pane-chat/core/hermes.js b/mods/pane-chat/core/hermes.js
+index 6037711f..ada25c83 100644
+--- a/mods/pane-chat/core/hermes.js
++++ b/mods/pane-chat/core/hermes.js
+@@ -239,3 +239,29 @@ export function hermesFeed(conv, l, off, cleanUser) {
+   // A reply that ends the turn: nothing is running any more.
+   if (l.finish === "stop" && !l.tool_calls?.length) { conv.open.clear(); conv.waits.clear(); conv.waiting = false; conv.doing = null; }
+ }
++
++// ---- Hermes as the Assistant (HS-1): Settings and the New space dialog offer it for the Assistant only (workers keep
++// Claude Code and Codex); core/agents.js and lib/settings.js hook these in.
++export const HERMES_NAME = "Hermes";
++// Auto: Hermes asks only for a command its guards find risky, and herdr-setup's bin/apply allowlists Herdr's own
++// (herdr-task, hc, herdr-artifact, herdr-secret, read-only git) in ~/.hermes/config.yaml, so those never stop it: the
++// chat has no approval cards for Hermes. Full access: --yolo.
++export const HERMES_PERMS = [{ id: "auto", label: "Auto" }, { id: "full", label: "Full access" }];
++// Its model: Hermes's own default (config.yaml model.default, read by core/agents.js DEFAULTS), or one typed by id (-m).
++export function hermesMenu(dflt, current = null) {
++  const models = [{ id: "default", name: dflt?.model ? `Default (${dflt.model})` : "Hermes default", efforts: [], defaultEffort: null, fast: false }];
++  if (current && current !== "default") models.unshift({ id: current, name: current, efforts: [], defaultEffort: null, fast: false });
++  return { name: HERMES_NAME, perms: HERMES_PERMS, models };
++}
++// How to start it from a role's settings { model, perm }.
++export function hermesArgv(pick) {
++  return ["hermes", ...(pick?.model && pick.model !== "default" ? ["-m", pick.model] : []), ...(pick?.perm === "full" ? ["--yolo"] : [])];
++}
++// What a Hermes runs on, as core/agents.js current() says it for the others.
++export function hermesCurrent(argv, meta) {
++  const i = Math.max(argv.lastIndexOf("-m"), argv.lastIndexOf("--model"));
++  return { agent: "hermes", model: meta?.model ?? (i >= 0 ? argv[i + 1] : null) ?? "default", effort: null, fast: false,
++    perm: argv.includes("--yolo") ? "full" : "auto", used: meta?.used ?? null, window: meta?.window ?? null };
++}
++// What a worker or reviewer is offered: the same, without Hermes.
++export const withoutHermes = (data) => (data?.menus?.hermes ? { ...data, menus: Object.fromEntries(Object.entries(data.menus).filter(([k]) => k !== "hermes")) } : data);
+diff --git a/mods/shepherdr-settings/core/agents.js b/mods/shepherdr-settings/core/agents.js
+index 572c3762..24a2bd3a 100644
+--- a/mods/shepherdr-settings/core/agents.js
++++ b/mods/shepherdr-settings/core/agents.js
+@@ -2,7 +2,8 @@
+ // rules both the window's model menu (lib/agent.js, mods/chat-models) and the web app's use. Reading an agent's own
+ // settings and restarting it run where each side runs commands (lib/agent.js, service/agents.ts).
+ // Shared core: the source is core/agents.js; bin/sync-shared copies it into the mods in lib/COPIES.
+-export const NAMES = { claude: "Claude Code", codex: "Codex" };
++import { HERMES_NAME, hermesMenu, hermesArgv, hermesCurrent } from "./hermes.js"; // local: Hermes as the Assistant
++export const NAMES = { claude: "Claude Code", codex: "Codex", hermes: HERMES_NAME }; // local: hermes
+ 
+ // Claude Code's current models, as its /model menu offers them. `id` is what --model gets;
+ // `match` the names a running agent may report for it.
+@@ -59,6 +60,8 @@ export const DEFAULTS = `
+ if [ "$1" = claude ]; then
+   f="$HOME/.claude/settings.json"
+   command -v jq >/dev/null && [ -f "$f" ] && jq -r '"model\\t\\(.model // "")", "effort\\t\\(.effortLevel // "")", "fast\\t\\(if .fastMode == true then "on" else "" end)", "per\\t\\(.modelSettings // {} | with_entries(.value |= (.effortLevel // null)) | tojson)", "mode\\t\\(.permissions.defaultMode // "")"' "$f" 2>/dev/null
++elif [ "$1" = hermes ]; then # local: Hermes's default model (config.yaml model.default)
++  printf 'model\\t%s\\n' "$(awk '/^model:/ {f=1; next} f && /^[^ ]/ {exit} f && sub(/^  default:[ \\t]*/, "") {print; exit}' "$HOME/.hermes/config.yaml" 2>/dev/null)"
+ else
+   f="$HOME/.codex/config.toml"
+   for k in model model_reasoning_effort service_tier sandbox_mode approval_policy; do
+@@ -102,6 +105,7 @@ export function current(kind, argv, meta, dflt) {
+   argv = argv ?? [];
+   meta = meta ?? {};
+   dflt = dflt ?? {};
++  if (kind === "hermes") return hermesCurrent(argv, meta); // local: Hermes
+   if (kind === "claude") {
+     const alias = flag(argv, "--model") ?? dflt.model;
+     let fast = dflt.fast;
+@@ -149,6 +153,7 @@ export function contextWords(c) {
+ // offers (Codex: its own models_cache.json; Claude Code: its /model menu), the picker searches them.
+ // `dflt` is that agent's settings (defaults()); `current` its running model, kept in the list.
+ export function menuFor(agent, dflt, current = null) {
++  if (agent === "hermes") return hermesMenu(dflt, current); // local: Hermes
+   if (agent === "claude") {
+     const models = CLAUDE_MODELS.map((m) => ({ id: m.id, name: m.name, efforts: CLAUDE_EFFORTS,
+       defaultEffort: dflt?.per?.[m.match[1].replace(/\[1m\]$/, "")] ?? dflt?.effort ?? null, fast: m.id.startsWith("opus") }));
+@@ -164,7 +169,7 @@ export function menuFor(agent, dflt, current = null) {
+ 
+ // The levels a model typed by id gets: its agent's usual ones.
+ export function typedModel(agent, id) {
+-  return { id, name: agent === "claude" ? modelName(id) : id, efforts: agent === "claude" ? CLAUDE_EFFORTS : ["low", "medium", "high", "xhigh"], defaultEffort: null, fast: false, typed: true };
++  return { id, name: agent === "claude" ? modelName(id) : id, efforts: agent === "claude" ? CLAUDE_EFFORTS : agent === "hermes" ? [] : ["low", "medium", "high", "xhigh"], defaultEffort: null, fast: false, typed: true }; // local: hermes has none
+ }
+ 
+ // The person's picks in the model menus (the window's and the web's alike), in PICKS_FILE under the
+@@ -322,6 +327,7 @@ export function freshArgv(kind, argv) {
+ // How to start the chosen agent: { argv, resume } (resume: argv already continues the session).
+ // `session`: the old conversation's id when it can be resumed (same agent only).
+ export function argvFor(pick, old) {
++  if (pick.agent === "hermes") { const a = hermesArgv(pick); return { argv: a, resume: false, base: a }; } // local: Hermes (a restart hands off)
+   const same = pick.agent === old.agent;
+   const flags = same ? kept(pick.agent, old.argv ?? []) : [];
+   if (pick.agent === "claude") {
+diff --git a/mods/shepherdr-settings/core/hermes.js b/mods/shepherdr-settings/core/hermes.js
+new file mode 100644
+index 00000000..ada25c83
+--- /dev/null
++++ b/mods/shepherdr-settings/core/hermes.js
+@@ -0,0 +1,267 @@
++// local: Hermes Agent (github.com/NousResearch/hermes-agent) in the chat, beside Claude Code and Codex.
++// Kept in its own file so upstream updates rarely conflict; core/chat-log.js and core/chat-reader.js only hook it in.
++//
++// Hermes keeps every session in one SQLite file (~/.hermes/state.db, or a profile's), not a log per session, and
++// names which process runs a session in ~/.hermes/runtime/active_sessions.json ({ entries: [{ pid, started_at }] })
++// under an id the database doesn't use, so the session is matched by its start time. Its "log path" is
++// "<state.db>#<session id>", and a message's row id stands in for the byte offset Claude Code's and Codex's logs use.
++
++// A Hermes terminal: Herdr reports no app for it (no hook integration), and its foreground is Hermes's own python.
++export function isHermes(t) {
++  const argv = t?.foreground?.argv ?? [];
++  return t?.foreground?.name === "hermes" || argv.some((a) => /hermes-agent|hermes_cli/.test(String(a)));
++}
++
++// FIND's Hermes branch (args: kind pid): prints "<db>#<session>", "pending" (no messages yet), or nothing.
++// shortcut: matched by start time (within 10 s), not an exact id; two Hermes started in the same moment could swap. Use an exact id if Hermes ever stores one.
++// shortcut: found once per process; a /new or /resume inside the same Hermes keeps showing the first session until it restarts.
++export const HERMES_FIND = String.raw`
++if [ "$kind" = hermes ]; then
++python3 -I - "$pid" <<'PY'
++import glob, json, os, sqlite3, subprocess, sys
++def kids(p):
++    out = subprocess.run(["pgrep", "-P", p], capture_output=True, text=True).stdout.split()
++    return [k for c in out for k in [c, *kids(c)]]
++pids = {sys.argv[1], *kids(sys.argv[1])}
++root = os.path.expanduser("~/.hermes")
++try:
++    entries = json.load(open(os.path.join(root, "runtime", "active_sessions.json"))).get("entries", [])
++except Exception:
++    entries = []
++mine = sorted((e for e in entries if str(e.get("pid")) in pids), key=lambda e: e.get("updated_at") or 0)
++if not mine:
++    sys.exit()
++# Hermes 0.23 names the database's id ("local-…") in the registry: exact. Older ones named another id, so
++# then the session row that started within a moment of the registry entry is it.
++ids = [str(x) for x in ((mine[-1].get("metadata") or {}).get("live_session_id"), mine[-1].get("session_id")) if x]
++at = float(mine[-1].get("started_at") or 0)
++best = None
++dbs = [os.path.join(root, "state.db"), *glob.glob(os.path.join(root, "profiles", "*", "state.db"))]
++for db in dbs:
++    try:
++        con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
++        for sid in ids:
++            if con.execute("select 1 from sessions where id=?", (sid,)).fetchone():
++                has = con.execute("select 1 from messages where session_id=? limit 1", (sid,)).fetchone()
++                print("%s#%s" % (db, sid) if has else "pending"); sys.exit()
++    except sqlite3.Error:
++        pass
++for db in dbs:
++    try:
++        con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
++        for sid, started in con.execute("select id, started_at from sessions where started_at between ? and ?", (at - 10, at + 10)).fetchall():
++            if best is None or abs(started - at) < best[0]:
++                best = (abs(started - at), db, sid, con.execute("select 1 from messages where session_id=? limit 1", (sid,)).fetchone())
++    except sqlite3.Error:
++        pass
++if best and best[3]:
++    print("%s#%s" % (best[1], best[2])); sys.exit()
++print("pending")
++PY
++exit 0
++fi
++`;
++
++// LOG's Hermes branch, for a "<db>#<session>" path (args: mode path ...), answering as LOG does for a file:
++//   tail <path> <from>          "T <size> <from> <end>" and the rows from id <from>
++//   page <path> <before> <want> "P <start> <end>" and about <want> rows before id <before> (start 0: the first)
++//   results <path> <id>...      each tool row's output, as {"payload":{"output":…}} (resultText reads it)
++// A row comes back as "<id>\tJ\t<json>", a tool's result as "<id>\tR\t <call id>".
++export const HERMES_LOG = String.raw`
++case "$f" in *'#'*)
++python3 -I - "$@" <<'PY'
++import json, sqlite3, sys
++mode, f, *rest = sys.argv[1:]
++db, sid = f.rsplit("#", 1)
++try:
++    con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
++    con.execute("select 1 from messages limit 1")
++except sqlite3.Error:
++    print("missing"); sys.exit()
++COLS = "id, role, content, tool_calls, tool_call_id, tool_name, timestamp, finish_reason, reasoning, display_kind"
++def rows(where, args, order="asc", limit=-1):
++    q = "select %s from messages where session_id=? and coalesce(active, 1)=1 and %s order by id %s limit ?" % (COLS, where, order)
++    return con.execute(q, (sid, *args, limit)).fetchall()
++def emit(r):
++    i, role, content, calls, call_id, tool, ts, finish, reasoning, kind = r
++    if role == "tool":
++        # A call that failed (a non-zero exit, or an error): said before its result, for the step's mark.
++        try:
++            out = json.loads(content or "")
++        except ValueError:
++            out = None
++        # A clarify question's end: answered (what was picked or typed) or cancelled.
++        if tool == "clarify" and isinstance(out, dict) and isinstance(out.get("responses"), list):
++            said = [str(x.get("user_response")) for x in out["responses"] if isinstance(x, dict) and x.get("user_response")]
++            done = {"hermes": 1, "role": "clarify_done", "call_id": call_id, "outcome": out.get("outcome"), "answers": said}
++            print("%d\tJ\t%s" % (i, json.dumps(done, ensure_ascii=False)))
++        if isinstance(out, dict) and (out.get("exit_code") not in (None, 0) or out.get("error")):
++            fail = {"hermes": 1, "role": "tool_failed", "call_id": call_id, "exit": out.get("exit_code")}
++            print("%d\tJ\t%s" % (i, json.dumps(fail)))
++        print("%d\tR\t %s" % (i, call_id or "")); return
++    try:
++        calls = json.loads(calls) if calls else None
++    except ValueError:
++        calls = None
++    rec = {"hermes": 1, "role": role, "content": (content or "")[:200000], "tool_calls": calls, "ts": ts,
++           "finish": finish, "thinking": bool(reasoning), "display_kind": kind}
++    print("%d\tJ\t%s" % (i, json.dumps(rec, ensure_ascii=False)))
++top = (con.execute("select max(id) from messages where session_id=?", (sid,)).fetchone()[0] or -1) + 1
++if mode == "tail":
++    o = int(rest[0])
++    got = rows("id >= ?", (o,))
++    print("T %d %d %d" % (max(top, o), o, got[-1][0] + 1 if got else o))
++    for r in got: emit(r)
++elif mode == "page":
++    before, want = int(rest[0]), int(rest[1])
++    e = min(before, top) if top > 0 else 0
++    got = rows("id < ?", (e,), "desc", want)[::-1]
++    a = got[0][0] if got else 0
++    if got and not con.execute("select 1 from messages where session_id=? and id < ? limit 1", (sid, a)).fetchone():
++        a = 0
++    print("P %d %d" % (a, e))
++    for r in got: emit(r)
++elif mode == "results":
++    for o in rest:
++        r = con.execute("select content from messages where id=?", (int(o),)).fetchone()
++        out = (r[0] if r else "") or ""
++        try:
++            j = json.loads(out)
++            if isinstance(j, dict) and "output" in j:
++                out = str(j.get("output") or j.get("error") or "")
++        except ValueError:
++            pass
++        sys.stdout.write("\x1e%s\n%s\n" % (o, json.dumps({"payload": {"output": out[:65536]}}, ensure_ascii=False)))
++PY
++exit 0;;
++esac
++`;
++
++const clip = (s, n = 80) => { s = String(s ?? "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
++const base = (p) => String(p ?? "").split("/").filter(Boolean).pop() ?? "";
++const first = (c) => clip(String(c ?? "").replace(/^(cd [^&;]+(&&|;)\s*)+/, "").split(/\s*(?:&&|\|\||;|\|)\s*/)[0], 48);
++
++// One Hermes tool call as a chat step: { kind, line, doing }.
++export function hermesStep(name, a = {}) {
++  const path = a.path ?? a.file_path ?? "";
++  if (name === "terminal") return { kind: "run", line: `Ran ${clip(a.command)}`, doing: `Running ${first(a.command)}` };
++  if (name === "execute_code") return { kind: "run", line: "Ran a script", doing: "Running a script" };
++  if (name === "read_file") return { kind: "read", line: `Read ${base(path)}`, doing: `Reading ${base(path)}` };
++  if (name === "write_file" || name === "patch") return { kind: "edit", line: `Edited ${base(path)}`, doing: `Editing ${base(path)}` };
++  if (name === "search_files" || name === "session_search") return { kind: "search", line: `Searched ${clip(a.pattern ?? a.query, 50)}`, doing: "Searching" };
++  if (name === "web_search") return { kind: "web", line: `Searched the web: ${clip(a.query, 60)}`, doing: "Searching the web" };
++  if (name === "web_extract" || name.startsWith("browser_")) return { kind: "web", line: `Read ${clip((a.urls ?? [a.url]).filter(Boolean).join(", "), 60) || "a page"}`, doing: "Reading the web" };
++  if (name === "delegate_task") return { kind: "agent", line: `Asked a helper: ${clip(a.goal ?? a.task ?? a.prompt, 70)}`, doing: "Starting a helper" };
++  if (name === "todo") return { kind: "plan", line: "Updated its plan", doing: "Planning" };
++  return { kind: "tool", line: `Used ${name}`, doing: `Using ${name}` };
++}
++
++// Whether Hermes's screen shows these questions' picker at its first question, none answered yet:
++//   │ 2 questions │  │ ▸ Color? │  │   ❯ 1. Red (Recommended) │ ...  (box borders and wrapping taken out).
++export function hermesOnScreen(screen, questions) {
++  const s = String(screen ?? "").replace(/[│╭╮╰╯─]/g, " ").replace(/\s+/g, " ");
++  const q = questions?.[0], n = questions?.length ?? 0;
++  if (!q || !s.includes("needs your input")) return false;
++  const one = (w) => s.includes(String(w).replace(/\s+/g, " ").trim());
++  return one(`${n} question${n === 1 ? "" : "s"}`) && one(`▸ ${q.text}`) && !s.includes(`✓ ${q.text}`) && q.choices.every((c) => one(c.label));
++}
++
++// The keys that answer them on that picker: a choice's number answers its question and goes to the next (the last
++// one submits); "Other" is the number after the choices, then the words and Enter. -> [{ keys } | { paste }], or null.
++export function hermesSteps(questions, answers) {
++  if (!Array.isArray(answers) || answers.length !== questions.length) return null;
++  const steps = [];
++  for (const [i, q] of questions.entries()) {
++    const said = String(answers[i] ?? "").trim();
++    if (!said) return null;
++    const k = q.choices.findIndex((c) => c.label === said || c.label.replace(/\s*\(recommended\)\s*$/i, "") === said);
++    const pick = (n) => (n < 9 ? [String(n + 1)] : [...Array(n).fill("down"), "enter"]);
++    if (k >= 0) steps.push({ keys: pick(k) });
++    else steps.push({ keys: pick(q.choices.length) }, { paste: said });
++  }
++  return steps;
++}
++
++// Hermes's own rows that aren't the conversation (notices to the agent, model switches, hidden turns).
++const QUIET = new Set(["hidden", "internal_notification", "async_delegation_complete", "process_complete", "model_switch"]);
++
++// One record from HERMES_LOG into the conversation (conv: core/chat-log.js Conversation; cleanUser: its words cleaner).
++export function hermesFeed(conv, l, off, cleanUser) {
++  const at = Math.round((l.ts ?? 0) * 1000);
++  if (QUIET.has(l.display_kind)) return;
++  if (l.role === "user") {
++    const u = l.content ? cleanUser(l.content) : null;
++    if (u) conv.user(`u${off}`, { ...u, at });
++    return;
++  }
++  if (l.role === "clarify_done") {
++    const q = conv.questions.get(String(l.call_id ?? ""));
++    const said = (l.answers ?? []).filter(Boolean);
++    if (q && (l.outcome === "submitted" || said.length)) q.closed = "answered";
++    // The answer as the person's own message right after the question, as Claude Code's (Conversation.answers()).
++    if (said.length) { conv.waiting = false; conv.push({ kind: "user", id: `ua${off}`, text: said.join("\n\n"), at, answer: true }); }
++    return;
++  }
++  if (l.role === "tool_failed") {
++    const s = conv.calls.get(String(l.call_id ?? ""));
++    if (s) { s.failed = true; s.line += l.exit != null ? ` (exit ${l.exit})` : " (failed)"; }
++    return;
++  }
++  if (l.role !== "assistant") return;
++  if (l.display_kind === "failed_turn") { conv.push({ kind: "error", id: `e${off}`, text: l.content || "The turn failed." }); conv.open.clear(); conv.doing = null; return; }
++  const said = conv.agentText(l.content ?? "");
++  if (said) conv.push({ kind: "agent", id: `a${off}`, text: said, at });
++  for (const c of Array.isArray(l.tool_calls) ? l.tool_calls : []) {
++    const id = String(c?.call_id ?? c?.id ?? `c${off}`);
++    const name = String(c?.function?.name ?? "tool");
++    let a = c?.function?.arguments;
++    try { a = typeof a === "string" ? JSON.parse(a) : a; } catch { a = {}; }
++    a = a && typeof a === "object" ? a : {};
++    if (name === "clarify") {
++      // Hermes 0.23: { questions: [{ question, choices }] }; before: { question, choices }.
++      const qs = Array.isArray(a.questions) ? a.questions : [a];
++      const text = qs.map((q) => [q?.question, ...(Array.isArray(q?.choices) ? q.choices.map((o) => `- ${o}`) : [])].filter(Boolean).join("\n"))
++        .filter(Boolean).join("\n\n");
++      // As Codex's (core/asks.js codexQuestions): the chat's question card answers them on Hermes's screen.
++      const questions = qs.map((q) => ({ text: String(q?.question ?? ""), header: "",
++        choices: (Array.isArray(q?.choices) ? q.choices : []).map((c) => ({ label: String(c) })).filter((c) => c.label) })).filter((q) => q.text);
++      if (text) conv.asked(id, { kind: "ask", id: `q${off}`, text, ...(questions.length ? { questions } : {}) });
++      conv.open.set(id, "Asking you something");
++      conv.doing = "Asking you something";
++      continue;
++    }
++    const st = hermesStep(name, a);
++    st.at = at || Date.now();
++    conv.step(id, off, st, name === "delegate_task" ? id : null);
++    if (name === "terminal") conv.sent(String(a.command ?? ""), off, at);
++  }
++  if (!said && !l.tool_calls?.length && l.thinking && !conv.open.size) conv.doing = "Thinking";
++  // A reply that ends the turn: nothing is running any more.
++  if (l.finish === "stop" && !l.tool_calls?.length) { conv.open.clear(); conv.waits.clear(); conv.waiting = false; conv.doing = null; }
++}
++
++// ---- Hermes as the Assistant (HS-1): Settings and the New space dialog offer it for the Assistant only (workers keep
++// Claude Code and Codex); core/agents.js and lib/settings.js hook these in.
++export const HERMES_NAME = "Hermes";
++// Auto: Hermes asks only for a command its guards find risky, and herdr-setup's bin/apply allowlists Herdr's own
++// (herdr-task, hc, herdr-artifact, herdr-secret, read-only git) in ~/.hermes/config.yaml, so those never stop it: the
++// chat has no approval cards for Hermes. Full access: --yolo.
++export const HERMES_PERMS = [{ id: "auto", label: "Auto" }, { id: "full", label: "Full access" }];
++// Its model: Hermes's own default (config.yaml model.default, read by core/agents.js DEFAULTS), or one typed by id (-m).
++export function hermesMenu(dflt, current = null) {
++  const models = [{ id: "default", name: dflt?.model ? `Default (${dflt.model})` : "Hermes default", efforts: [], defaultEffort: null, fast: false }];
++  if (current && current !== "default") models.unshift({ id: current, name: current, efforts: [], defaultEffort: null, fast: false });
++  return { name: HERMES_NAME, perms: HERMES_PERMS, models };
++}
++// How to start it from a role's settings { model, perm }.
++export function hermesArgv(pick) {
++  return ["hermes", ...(pick?.model && pick.model !== "default" ? ["-m", pick.model] : []), ...(pick?.perm === "full" ? ["--yolo"] : [])];
++}
++// What a Hermes runs on, as core/agents.js current() says it for the others.
++export function hermesCurrent(argv, meta) {
++  const i = Math.max(argv.lastIndexOf("-m"), argv.lastIndexOf("--model"));
++  return { agent: "hermes", model: meta?.model ?? (i >= 0 ? argv[i + 1] : null) ?? "default", effort: null, fast: false,
++    perm: argv.includes("--yolo") ? "full" : "auto", used: meta?.used ?? null, window: meta?.window ?? null };
++}
++// What a worker or reviewer is offered: the same, without Hermes.
++export const withoutHermes = (data) => (data?.menus?.hermes ? { ...data, menus: Object.fromEntries(Object.entries(data.menus).filter(([k]) => k !== "hermes")) } : data);
+diff --git a/mods/shepherdr-settings/main.js b/mods/shepherdr-settings/main.js
+index 5bc6a8f0..513cdf08 100644
+--- a/mods/shepherdr-settings/main.js
++++ b/mods/shepherdr-settings/main.js
+@@ -29,6 +29,7 @@ import { branchInit, branchRow } from "./branch-names.js";
+ import { feedbackInit, feedbackRow, feedbackRepoRow } from "./feedback-repo.js";
+ import { autopilotInit, autopilotSection, autopilotFlush } from "./autopilot-section.js";
+ import { spaceName } from "./core/spaces.js";
++import { withoutHermes } from "./core/hermes.js"; // local: Hermes only for the Assistant
+ import { NOTIFY, NOTIFY_DEFAULT, notifyMachine, notifyMachineOwn, notifyOf, notifyOwn, notifyEverywhere,
+   setNotifyEverywhere, setNotifyMachine, setNotify } from "./notify.js";
+ import { machinesSection } from "./machines-section.js";
+@@ -324,7 +325,8 @@ export default class ShepherdrSettings extends View {
+         sel = { agent: o, model: this.data.menus[o].models[0]?.id ?? null, effort: null, fast: false, perm: this.data.permDefault?.[o] ?? null };
+       }
+       sel ??= this.data?.defaults ?? null;
+-      this.roles[r.id] = { ...(this.roles[r.id] ?? {}), sel: sel ? { ...sel } : null, data: this.data, saved: JSON.stringify(sel), unset };
++      const data = r.id === "coordinator" ? this.data : withoutHermes(this.data); // local: Hermes only for the Assistant
++      this.roles[r.id] = { ...(this.roles[r.id] ?? {}), sel: sel ? { ...sel } : null, data, saved: JSON.stringify(sel), unset }; // local: data
+     }
+   }
+ 
+diff --git a/mods/shepherdr-settings/settings.js b/mods/shepherdr-settings/settings.js
+index caf18c66..8d0d6b2d 100644
+--- a/mods/shepherdr-settings/settings.js
++++ b/mods/shepherdr-settings/settings.js
+@@ -20,6 +20,7 @@ import * as fs from "fs/promises";
+ import * as agent from "./agent.js";
+ // The button's words and the choices on offer: core/settings.js, shared with the web app's Settings.
+ import { modelLabel, choicesFrom } from "./core/settings.js";
++import { menuFor } from "./core/agents.js"; // local: Hermes
+ 
+ const ROW = 31, LABEL = 110;
+ const LEVEL = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra", none: "None" };
+@@ -34,6 +35,12 @@ export async function loadChoices(machine = null) {
+   const installed = Object.fromEntries(["claude", "codex"].map((k) => [k, prog(k) ? prog(k).installed !== false : k === "claude"]));
+   const icons = Object.fromEntries(["claude", "codex"].map((k) => [k, { icon: prog(k)?.icon ?? null, tint: Boolean(prog(k)?.tint) }]));
+   const { menus, permDefault, defaults } = choicesFrom({ claude, codex }, installed);
++  // local: Hermes too when installed, for the Assistant only (Settings and the chat drop it for other roles: withoutHermes)
++  if (prog("hermes") && prog("hermes").installed !== false) {
++    menus.hermes = menuFor("hermes", await agent.defaults("hermes", machine));
++    permDefault.hermes = "auto";
++    icons.hermes = { icon: prog("hermes").icon ?? null, tint: Boolean(prog("hermes").tint) };
++  }
+   return { menus, icons, installed, permDefault, defaults };
+ }
+ 
+diff --git a/mods/tasks/bin/herdr_task/settings.py b/mods/tasks/bin/herdr_task/settings.py
+index 62075dff..58e226c5 100644
+--- a/mods/tasks/bin/herdr_task/settings.py
++++ b/mods/tasks/bin/herdr_task/settings.py
+@@ -193,6 +193,9 @@ def argv_for(pick):
+         elif perm:
+             a += ["-s", "workspace-write", "-a", "on-request"]
+         return a
++    if agent == "hermes":  # local: Hermes as the Assistant (core/hermes.js hermesArgv): its default model unless one is named, Full access = --yolo
++        m = pick.get("model")
++        return ["hermes", *(["-m", m] if m and m != "default" else []), *(["--yolo"] if pick.get("perm") == "full" else [])]
+     return [agent] if agent else None
+ 
+ 
+diff --git a/test/hermes.test.js b/test/hermes.test.js
+index 0b783412..2e254f06 100644
+--- a/test/hermes.test.js
++++ b/test/hermes.test.js
+@@ -69,3 +69,22 @@ test("a Hermes that exited to its shell is no longer a Hermes chat (its last sta
+   expect(kindOf({ status: { app: "hermes", state: "working" }, foreground: { name: "zsh", argv: ["zsh"] } })).toBe(null);
+   expect(kindOf({ status: { app: "hermes" }, foreground: { name: "hermes", argv: ["hermes"] } })).toBe("hermes");
+ });
++
++// local: Hermes as the Assistant (HS-1): what Settings offers and the command it starts.
++import { argvFor, menuFor, current, NAMES } from "../core/agents.js";
++import { withoutHermes } from "../core/hermes.js";
++
++test("a Hermes Assistant starts on its default model with the allowlist (Auto), or --yolo for Full access", () => {
++  expect(argvFor({ agent: "hermes", model: "default", perm: "auto" }, { agent: null, argv: [] }).argv).toEqual(["hermes"]);
++  expect(argvFor({ agent: "hermes", model: "default", perm: "full" }, { agent: null, argv: [] }).argv).toEqual(["hermes", "--yolo"]);
++  expect(argvFor({ agent: "hermes", model: "qwen/qwen3.7-max", perm: "auto" }, { agent: "hermes", argv: ["hermes"] }))
++    .toEqual({ argv: ["hermes", "-m", "qwen/qwen3.7-max"], resume: false, base: ["hermes", "-m", "qwen/qwen3.7-max"] });
++  expect(current("hermes", ["python", "hermes", "-m", "x", "--yolo"], {})).toMatchObject({ agent: "hermes", model: "x", perm: "full" });
++  expect(current("hermes", [], {})).toMatchObject({ agent: "hermes", model: "default", perm: "auto" });
++  const m = menuFor("hermes", { model: "claude-opus-5-5[1m]" });
++  expect(m.name).toBe(NAMES.hermes);
++  expect(m.models[0]).toMatchObject({ id: "default", name: "Default (claude-opus-5-5[1m])" });
++  expect(m.perms.map((p) => p.id)).toEqual(["auto", "full"]);
++  // workers and the reviewer aren't offered it
++  expect(Object.keys(withoutHermes({ menus: { claude: {}, codex: {}, hermes: m } }).menus)).toEqual(["claude", "codex"]);
++});
+diff --git a/test/test_hermes_settings.py b/test/test_hermes_settings.py
+new file mode 100644
+index 00000000..a2e380a2
+--- /dev/null
++++ b/test/test_hermes_settings.py
+@@ -0,0 +1,21 @@
++"""local: Hermes as the Assistant: herdr-task's argv_for turns Settings' coordinator choice into a hermes command,
++the same as core/hermes.js hermesArgv (test/hermes.test.js)."""
++import os
++import sys
++import unittest
++
++sys.dont_write_bytecode = True
++sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mods", "tasks", "bin"))
++from herdr_task.settings import argv_for  # noqa: E402
++
++
++class HermesArgv(unittest.TestCase):
++    def test_each_perm(self):
++        self.assertEqual(argv_for({"agent": "hermes", "model": "default", "perm": "auto"}), ["hermes"])
++        self.assertEqual(argv_for({"agent": "hermes", "model": "default", "perm": "full"}), ["hermes", "--yolo"])
++        self.assertEqual(argv_for({"agent": "hermes", "model": "qwen/qwen3.7-max", "perm": "auto"}), ["hermes", "-m", "qwen/qwen3.7-max"])
++        self.assertEqual(argv_for({"agent": "hermes"}), ["hermes"])
++
++
++if __name__ == "__main__":
++    unittest.main()
