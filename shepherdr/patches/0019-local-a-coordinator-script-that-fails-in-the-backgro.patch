@@ -1,0 +1,241 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chris F Ravenscroft <chris@voilaweb.com>
+Date: Thu, 12 Nov 2026 16:09:37 -0800
+Subject: [PATCH 19/19] local: a coordinator script that fails in the
+ background shows a toast (run-or-toast.sh, mods/toasts); restart.sh says when
+ Herdr started no agent
+
+---
+ lib/coordinator.js                     |  5 ++++-
+ mods/coordinator/coordinator.js        |  5 ++++-
+ mods/coordinator/restart.sh            |  2 +-
+ mods/coordinator/run-or-toast.sh       | 11 +++++++++++
+ mods/menu-tasks/coordinator.js         |  5 ++++-
+ mods/new-menu-tasks/coordinator.js     |  5 ++++-
+ mods/newspace/coordinator.js           |  5 ++++-
+ mods/shepherdr-settings/coordinator.js |  5 ++++-
+ mods/spaces-chat/coordinator.js        |  5 ++++-
+ mods/tabs-tasks/coordinator.js         |  5 ++++-
+ mods/tasks/coordinator.js              |  5 ++++-
+ mods/toasts/main.js                    | 16 ++++++++++++++--
+ 12 files changed, 62 insertions(+), 12 deletions(-)
+ create mode 100644 mods/coordinator/run-or-toast.sh
+
+diff --git a/lib/coordinator.js b/lib/coordinator.js
+index 254be271..045ab01a 100644
+--- a/lib/coordinator.js
++++ b/lib/coordinator.js
+@@ -95,8 +95,11 @@ export function entryFor(k, known) {
+ // The helper scripts run detached: the menu that starts one closes at once. macOS has no setsid (#736): there the
+ // script runs in a job of its own (set -m) under nohup, so it outlives the menu all the same.
+ export const DETACH = 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null';
++// local: through run-or-toast.sh, so a failure becomes a toast (mods/toasts reads data/coordinator/failed.txt)
++const FAILED = { restart: "The agent didn't restart", close: "The Assistant didn't close", task: "The task's agent didn't switch" };
+ function script(name, args) {
+-  return exec("bash", ["-c", DETACH, `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
++  const dir = `${appHome()}/mods/coordinator`; // local: run-or-toast.sh
++  return exec("bash", ["-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+diff --git a/mods/coordinator/coordinator.js b/mods/coordinator/coordinator.js
+index 254be271..045ab01a 100644
+--- a/mods/coordinator/coordinator.js
++++ b/mods/coordinator/coordinator.js
+@@ -95,8 +95,11 @@ export function entryFor(k, known) {
+ // The helper scripts run detached: the menu that starts one closes at once. macOS has no setsid (#736): there the
+ // script runs in a job of its own (set -m) under nohup, so it outlives the menu all the same.
+ export const DETACH = 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null';
++// local: through run-or-toast.sh, so a failure becomes a toast (mods/toasts reads data/coordinator/failed.txt)
++const FAILED = { restart: "The agent didn't restart", close: "The Assistant didn't close", task: "The task's agent didn't switch" };
+ function script(name, args) {
+-  return exec("bash", ["-c", DETACH, `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
++  const dir = `${appHome()}/mods/coordinator`; // local: run-or-toast.sh
++  return exec("bash", ["-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+diff --git a/mods/coordinator/restart.sh b/mods/coordinator/restart.sh
+index d052723d..d084f5f7 100755
+--- a/mods/coordinator/restart.sh
++++ b/mods/coordinator/restart.sh
+@@ -148,7 +148,7 @@ else
+     hc send "$new" "$msg" >/dev/null 2>&1
+   fi
+ fi
+-[ -n "$new" ] || exit 1
++[ -n "$new" ] || { echo "Herdr didn't start the new agent." >&2; exit 1; } # local: says why (a toast shows it)
+ hc kill "$old" >/dev/null 2>&1
+ hc rm "$old" >/dev/null 2>&1
+ echo "$new"
+diff --git a/mods/coordinator/run-or-toast.sh b/mods/coordinator/run-or-toast.sh
+new file mode 100644
+index 00000000..0278d609
+--- /dev/null
++++ b/mods/coordinator/run-or-toast.sh
+@@ -0,0 +1,11 @@
++#!/usr/bin/env bash
++# local: runs a coordinator script (restart.sh, close.sh, task.sh) that lib/coordinator.js started detached (DETACH),
++# and says when it fails: its title and last error line go in data/coordinator/failed.txt, which mods/toasts shows.
++# Usage: run-or-toast.sh <title> <script> [args...]. bash 3.2 (macOS's /bin/bash) safe.
++title=$1
++shift
++err=$(bash "$@" 2>&1 >/dev/null) && exit 0
++f=${HERDR_APP_HOME:-$HOME/.config/herdr-app}/data/coordinator/failed.txt
++mkdir -p "${f%/*}"
++last=$(printf '%s\n' "$err" | grep -v '^[[:space:]]*$' | tail -n 1 | tr '\t' ' ')
++printf '%s\t%s\n' "$title" "${last:-It stopped before it finished.}" >>"$f"
+diff --git a/mods/menu-tasks/coordinator.js b/mods/menu-tasks/coordinator.js
+index 254be271..045ab01a 100644
+--- a/mods/menu-tasks/coordinator.js
++++ b/mods/menu-tasks/coordinator.js
+@@ -95,8 +95,11 @@ export function entryFor(k, known) {
+ // The helper scripts run detached: the menu that starts one closes at once. macOS has no setsid (#736): there the
+ // script runs in a job of its own (set -m) under nohup, so it outlives the menu all the same.
+ export const DETACH = 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null';
++// local: through run-or-toast.sh, so a failure becomes a toast (mods/toasts reads data/coordinator/failed.txt)
++const FAILED = { restart: "The agent didn't restart", close: "The Assistant didn't close", task: "The task's agent didn't switch" };
+ function script(name, args) {
+-  return exec("bash", ["-c", DETACH, `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
++  const dir = `${appHome()}/mods/coordinator`; // local: run-or-toast.sh
++  return exec("bash", ["-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+diff --git a/mods/new-menu-tasks/coordinator.js b/mods/new-menu-tasks/coordinator.js
+index 254be271..045ab01a 100644
+--- a/mods/new-menu-tasks/coordinator.js
++++ b/mods/new-menu-tasks/coordinator.js
+@@ -95,8 +95,11 @@ export function entryFor(k, known) {
+ // The helper scripts run detached: the menu that starts one closes at once. macOS has no setsid (#736): there the
+ // script runs in a job of its own (set -m) under nohup, so it outlives the menu all the same.
+ export const DETACH = 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null';
++// local: through run-or-toast.sh, so a failure becomes a toast (mods/toasts reads data/coordinator/failed.txt)
++const FAILED = { restart: "The agent didn't restart", close: "The Assistant didn't close", task: "The task's agent didn't switch" };
+ function script(name, args) {
+-  return exec("bash", ["-c", DETACH, `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
++  const dir = `${appHome()}/mods/coordinator`; // local: run-or-toast.sh
++  return exec("bash", ["-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+diff --git a/mods/newspace/coordinator.js b/mods/newspace/coordinator.js
+index 254be271..045ab01a 100644
+--- a/mods/newspace/coordinator.js
++++ b/mods/newspace/coordinator.js
+@@ -95,8 +95,11 @@ export function entryFor(k, known) {
+ // The helper scripts run detached: the menu that starts one closes at once. macOS has no setsid (#736): there the
+ // script runs in a job of its own (set -m) under nohup, so it outlives the menu all the same.
+ export const DETACH = 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null';
++// local: through run-or-toast.sh, so a failure becomes a toast (mods/toasts reads data/coordinator/failed.txt)
++const FAILED = { restart: "The agent didn't restart", close: "The Assistant didn't close", task: "The task's agent didn't switch" };
+ function script(name, args) {
+-  return exec("bash", ["-c", DETACH, `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
++  const dir = `${appHome()}/mods/coordinator`; // local: run-or-toast.sh
++  return exec("bash", ["-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+diff --git a/mods/shepherdr-settings/coordinator.js b/mods/shepherdr-settings/coordinator.js
+index 254be271..045ab01a 100644
+--- a/mods/shepherdr-settings/coordinator.js
++++ b/mods/shepherdr-settings/coordinator.js
+@@ -95,8 +95,11 @@ export function entryFor(k, known) {
+ // The helper scripts run detached: the menu that starts one closes at once. macOS has no setsid (#736): there the
+ // script runs in a job of its own (set -m) under nohup, so it outlives the menu all the same.
+ export const DETACH = 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null';
++// local: through run-or-toast.sh, so a failure becomes a toast (mods/toasts reads data/coordinator/failed.txt)
++const FAILED = { restart: "The agent didn't restart", close: "The Assistant didn't close", task: "The task's agent didn't switch" };
+ function script(name, args) {
+-  return exec("bash", ["-c", DETACH, `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
++  const dir = `${appHome()}/mods/coordinator`; // local: run-or-toast.sh
++  return exec("bash", ["-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+diff --git a/mods/spaces-chat/coordinator.js b/mods/spaces-chat/coordinator.js
+index 254be271..045ab01a 100644
+--- a/mods/spaces-chat/coordinator.js
++++ b/mods/spaces-chat/coordinator.js
+@@ -95,8 +95,11 @@ export function entryFor(k, known) {
+ // The helper scripts run detached: the menu that starts one closes at once. macOS has no setsid (#736): there the
+ // script runs in a job of its own (set -m) under nohup, so it outlives the menu all the same.
+ export const DETACH = 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null';
++// local: through run-or-toast.sh, so a failure becomes a toast (mods/toasts reads data/coordinator/failed.txt)
++const FAILED = { restart: "The agent didn't restart", close: "The Assistant didn't close", task: "The task's agent didn't switch" };
+ function script(name, args) {
+-  return exec("bash", ["-c", DETACH, `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
++  const dir = `${appHome()}/mods/coordinator`; // local: run-or-toast.sh
++  return exec("bash", ["-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+diff --git a/mods/tabs-tasks/coordinator.js b/mods/tabs-tasks/coordinator.js
+index 254be271..045ab01a 100644
+--- a/mods/tabs-tasks/coordinator.js
++++ b/mods/tabs-tasks/coordinator.js
+@@ -95,8 +95,11 @@ export function entryFor(k, known) {
+ // The helper scripts run detached: the menu that starts one closes at once. macOS has no setsid (#736): there the
+ // script runs in a job of its own (set -m) under nohup, so it outlives the menu all the same.
+ export const DETACH = 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null';
++// local: through run-or-toast.sh, so a failure becomes a toast (mods/toasts reads data/coordinator/failed.txt)
++const FAILED = { restart: "The agent didn't restart", close: "The Assistant didn't close", task: "The task's agent didn't switch" };
+ function script(name, args) {
+-  return exec("bash", ["-c", DETACH, `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
++  const dir = `${appHome()}/mods/coordinator`; // local: run-or-toast.sh
++  return exec("bash", ["-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+diff --git a/mods/tasks/coordinator.js b/mods/tasks/coordinator.js
+index 254be271..045ab01a 100644
+--- a/mods/tasks/coordinator.js
++++ b/mods/tasks/coordinator.js
+@@ -95,8 +95,11 @@ export function entryFor(k, known) {
+ // The helper scripts run detached: the menu that starts one closes at once. macOS has no setsid (#736): there the
+ // script runs in a job of its own (set -m) under nohup, so it outlives the menu all the same.
+ export const DETACH = 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null';
++// local: through run-or-toast.sh, so a failure becomes a toast (mods/toasts reads data/coordinator/failed.txt)
++const FAILED = { restart: "The agent didn't restart", close: "The Assistant didn't close", task: "The task's agent didn't switch" };
+ function script(name, args) {
+-  return exec("bash", ["-c", DETACH, `${appHome()}/mods/coordinator/${name}.sh`, ...args]);
++  const dir = `${appHome()}/mods/coordinator`; // local: run-or-toast.sh
++  return exec("bash", ["-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+diff --git a/mods/toasts/main.js b/mods/toasts/main.js
+index 6e975cc9..759602fd 100644
+--- a/mods/toasts/main.js
++++ b/mods/toasts/main.js
+@@ -8,9 +8,9 @@
+ 
+ import { View, div, svg } from "gpui-kit";
+ import { v_flex, h_flex } from "gpui-base";
+-import { placement, run, shared, setShared, theme } from "herdr";
++import { placement, run, shared, setShared, theme, appHome, readTextFile, writeTextFile } from "herdr"; // local: appHome, readTextFile, writeTextFile
+ import { note } from "./usage.js";
+-import { TOASTS, TEXT, RADIUS, red, amber, green } from "./ui.js";
++import { TOASTS, TEXT, RADIUS, red, amber, green, toast } from "./ui.js"; // local: toast
+ // How many, how wide, how long and in which color: core/toasts.js, shared with the web app's toasts.
+ import { SHOWN, WIDTH, LINES, BODY_MAX, tone, clip, unexpired } from "./core/toasts.js";
+ 
+@@ -32,6 +32,18 @@ export default class Toasts extends View {
+       const left = unexpired(list);
+       if (left.length !== list.length) setShared(TOASTS, left);
+     });
++    // local: a coordinator script that failed in the background (mods/coordinator/run-or-toast.sh): "title\tbody" lines
++    cx.timer.every(3000, (cx) => cx.spawn(async () => {
++      const f = `${appHome()}/data/coordinator/failed.txt`;
++      const text = await readTextFile(f).catch(() => null);
++      if (!text) return;
++      // Only what was read is taken: a line written meanwhile waits for the next round.
++      if (!(await writeTextFile(f, "", text).then(() => true, () => false))) return;
++      for (const l of text.split("\n").filter(Boolean)) {
++        const [title, body] = l.split("\t");
++        toast({ title, body: body ?? "", level: "error" });
++      }
++    }));
+   }
+ 
+   dismiss(id) {

@@ -11,18 +11,18 @@ Subject: [PATCH 05/19] local: pane header offers Chat for a Hermes terminal
  create mode 100644 mods/pane-chat/core/hermes.js
 
 diff --git a/lib/COPIES b/lib/COPIES
-index f8d3e6bc..e8ec629a 100644
+index 14291639..5ca9d8b3 100644
 --- a/lib/COPIES
 +++ b/lib/COPIES
 @@ -28,7 +28,7 @@ core/person.js: chat shepherdr-settings tabs-tasks
- core/spaces.js: chat spaces-chat shepherdr-settings jump pane-chat
+ core/spaces.js: chat spaces-chat shepherdr-settings jump pane-chat tasks newspace coordinator menu-tasks new-menu-tasks tabs-tasks workspace-status-chat
  core/autopilot.js: pane-chat shepherdr-settings
  core/chat-reader.js: chat
 -core/hermes.js: chat
 +core/hermes.js: chat pane-chat
  core/clean-env.js: chat
- core/worktree.js: task-changes task-pr
- core/recipe.js: artifacts
+ core/worktree.js: task-pr
+ core/recipe.js: artifacts chat
 diff --git a/mods/pane-chat/core/hermes.js b/mods/pane-chat/core/hermes.js
 new file mode 100644
 index 00000000..982d9514
@@ -202,7 +202,7 @@ index 00000000..982d9514
 +  if (l.finish === "stop" && !l.tool_calls?.length) { conv.open.clear(); conv.waits.clear(); conv.waiting = false; conv.doing = null; }
 +}
 diff --git a/mods/pane-chat/main.js b/mods/pane-chat/main.js
-index 31464bbb..3dd53f24 100644
+index 06a4ad81..daba613f 100644
 --- a/mods/pane-chat/main.js
 +++ b/mods/pane-chat/main.js
 @@ -23,6 +23,7 @@ import { button as uiButton, segmented, TEXT, RADIUS, toast, plainError } from "

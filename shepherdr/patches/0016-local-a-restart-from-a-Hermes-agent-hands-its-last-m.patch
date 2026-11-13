@@ -74,7 +74,7 @@ index 00000000..cfb34bcd
 +print(db, sid)
 +PY
 diff --git a/mods/coordinator/restart.sh b/mods/coordinator/restart.sh
-index 81aad29f..b0ce4b94 100755
+index cc52ef80..d052723d 100755
 --- a/mods/coordinator/restart.sh
 +++ b/mods/coordinator/restart.sh
 @@ -53,6 +53,15 @@ if [ "$app" = claude-code ] && [ -n "$pid" ]; then

@@ -19,7 +19,7 @@ Subject: [PATCH 04/19] local: Hermes Agent in the Chat view (core/hermes.js)
  create mode 100644 test/hermes.test.js
 
 diff --git a/core/chat-log.js b/core/chat-log.js
-index 18c8707c..2f7e8285 100644
+index 9fcf4419..f43c42ae 100644
 --- a/core/chat-log.js
 +++ b/core/chat-log.js
 @@ -8,9 +8,11 @@
@@ -42,7 +42,7 @@ index 18c8707c..2f7e8285 100644
  [ -f "$f" ] || { echo "missing"; exit 0; }
  s=$(wc -c < "$f" | tr -d ' ')
  X='
-@@ -844,7 +847,8 @@ export class Conversation {
+@@ -882,7 +885,8 @@ export class Conversation {
        }
        const l = parse(r.data);
        if (!l || typeof l !== "object") continue;
@@ -252,19 +252,19 @@ index 00000000..982d9514
 +  if (l.finish === "stop" && !l.tool_calls?.length) { conv.open.clear(); conv.waits.clear(); conv.waiting = false; conv.doing = null; }
 +}
 diff --git a/lib/COPIES b/lib/COPIES
-index 5cac5816..f8d3e6bc 100644
+index 40820f9b..14291639 100644
 --- a/lib/COPIES
 +++ b/lib/COPIES
 @@ -28,6 +28,7 @@ core/person.js: chat shepherdr-settings tabs-tasks
- core/spaces.js: chat spaces-chat shepherdr-settings jump pane-chat
+ core/spaces.js: chat spaces-chat shepherdr-settings jump pane-chat tasks newspace coordinator menu-tasks new-menu-tasks tabs-tasks workspace-status-chat
  core/autopilot.js: pane-chat shepherdr-settings
  core/chat-reader.js: chat
 +core/hermes.js: chat
  core/clean-env.js: chat
- core/worktree.js: task-changes task-pr
- core/recipe.js: artifacts
+ core/worktree.js: task-pr
+ core/recipe.js: artifacts chat
 diff --git a/mods/chat/core/chat-log.js b/mods/chat/core/chat-log.js
-index 18c8707c..2f7e8285 100644
+index 9fcf4419..f43c42ae 100644
 --- a/mods/chat/core/chat-log.js
 +++ b/mods/chat/core/chat-log.js
 @@ -8,9 +8,11 @@
@@ -287,7 +287,7 @@ index 18c8707c..2f7e8285 100644
  [ -f "$f" ] || { echo "missing"; exit 0; }
  s=$(wc -c < "$f" | tr -d ' ')
  X='
-@@ -844,7 +847,8 @@ export class Conversation {
+@@ -882,7 +885,8 @@ export class Conversation {
        }
        const l = parse(r.data);
        if (!l || typeof l !== "object") continue;
@@ -497,18 +497,18 @@ index 00000000..982d9514
 +  if (l.finish === "stop" && !l.tool_calls?.length) { conv.open.clear(); conv.waits.clear(); conv.waiting = false; conv.doing = null; }
 +}
 diff --git a/mods/chat/main.js b/mods/chat/main.js
-index 762d2697..81c0fc46 100644
+index 0913d259..9d023a38 100644
 --- a/mods/chat/main.js
 +++ b/mods/chat/main.js
-@@ -30,6 +30,7 @@ import * as fs from "fs/promises";
- import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names, pilotLine } from "./core/chat-log.js";
+@@ -32,6 +32,7 @@ import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names,
  import { BgJobs } from "./core/bg-jobs.js";
  import { ChatReader } from "./core/chat-reader.js";
+ import { preview } from "./core/recipe.js";
 +import { isHermes } from "./core/hermes.js"; // local: Hermes
  import { words, howAnswered, codexOnScreen, codexSteps } from "./core/asks.js";
  // The rows' words and rules the web app's chat draws by too (core/chat-view.js).
- import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed } from "./core/chat-view.js";
-@@ -71,7 +72,7 @@ const PAGE = 200;
+ import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, videoLine, mediaIn, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed } from "./core/chat-view.js";
+@@ -75,7 +76,7 @@ const PAGE = 200;
  const KEEP = 2000;
  // The conversation's width at most, in px: lines stay readable in a wide pane.
  const COLUMN = 760;
@@ -517,16 +517,16 @@ index 762d2697..81c0fc46 100644
  const norm = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
  // The role templates' folder on the machine a command runs on (sh -c prefix: $dir).
  const TEMPLATE = 'dir="$HOME/.config/herdr-core/templates"; ';
-@@ -1073,7 +1074,7 @@ export default class Chat extends View {
+@@ -1146,7 +1147,7 @@ export default class Chat extends View {
      const pane = this.lastPane ?? (this.slot && this.slotRec()?.pane) ?? null;
      if (!this.thread && !this.inner && !this.swapping && !t.labels?.["herdr.chat"] && pane && !panes().some((p) => p.terminal === this.addr)
-       && panes().some((p) => p.pane === pane && p.mod === "chat")) await hc(["label", this.addr, `herdr.chat=${pane}`]);
+       && panes().some((p) => p.pane === pane && p.mod === "chat")) await hc(["label", this.addr, `herdr.chat=${chatLabel(pane)}`]);
 -    const kind = KINDS[t.status?.app] ?? KINDS[t.foreground?.name];
 +    const kind = KINDS[t.status?.app] ?? KINDS[t.foreground?.name] ?? (isHermes(t) ? "hermes" : undefined); // local: Hermes
      // Back at its shell because the session it resumed is gone: a new agent starts there.
      if (!kind) { if (!(await this.checkLost(this.addr, cx, t))) this.set("unsupported", cx); return; }
      this.t = t;
-@@ -2976,7 +2977,7 @@ export default class Chat extends View {
+@@ -3119,7 +3120,7 @@ export default class Chat extends View {
  
    // Whose ask a card shows: the CLI's short name ("Claude asks").
    cli() {

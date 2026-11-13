@@ -13,10 +13,10 @@ Subject: [PATCH 08/19] local: Hermes failed calls marked, clarify questions
  5 files changed, 55 insertions(+), 5 deletions(-)
 
 diff --git a/core/chat-log.js b/core/chat-log.js
-index 2f7e8285..7635b9fb 100644
+index f43c42ae..cafb20af 100644
 --- a/core/chat-log.js
 +++ b/core/chat-log.js
-@@ -1048,6 +1048,7 @@ export function summary(steps) {
+@@ -1101,6 +1101,7 @@ export function summary(steps) {
      say("tool", "used a tool", "used # tools"),
    ].filter(Boolean);
    const s = parts.join(", ");
@@ -69,10 +69,10 @@ index a23c2b78..430c23f6 100644
        conv.open.set(id, "Asking you something");
        conv.doing = "Asking you something";
 diff --git a/mods/chat/core/chat-log.js b/mods/chat/core/chat-log.js
-index 2f7e8285..7635b9fb 100644
+index f43c42ae..cafb20af 100644
 --- a/mods/chat/core/chat-log.js
 +++ b/mods/chat/core/chat-log.js
-@@ -1048,6 +1048,7 @@ export function summary(steps) {
+@@ -1101,6 +1101,7 @@ export function summary(steps) {
      say("tool", "used a tool", "used # tools"),
    ].filter(Boolean);
    const s = parts.join(", ");

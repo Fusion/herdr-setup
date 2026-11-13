@@ -9,10 +9,10 @@ Subject: [PATCH 03/19] local: sidebar row shows a breathing dot while a
  1 file changed, 2 insertions(+)
 
 diff --git a/mods/spaces-chat/main.js b/mods/spaces-chat/main.js
-index 01e3ae44..7f9db262 100644
+index e019e5d7..801e4a5e 100644
 --- a/mods/spaces-chat/main.js
 +++ b/mods/spaces-chat/main.js
-@@ -740,6 +740,8 @@ export default class Spaces extends View {
+@@ -755,6 +755,8 @@ export default class Spaces extends View {
              .when(quiet && Boolean(iconOf(w.id)), (el) => el.opacity(0.5)).child(iconOf(w.id) ?? "#")))
            .child(nameText(name, fresh, quiet ? t.dim : w.active ? t.foreground : t.muted, t))
            .when(Boolean(this.pilotMark(w, t)), (el) => el.child(this.pilotMark(w, t)))

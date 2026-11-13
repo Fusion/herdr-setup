@@ -9,7 +9,7 @@ Subject: [PATCH 06/19] local: working dot also when a done agent shares the
  1 file changed, 7 insertions(+), 4 deletions(-)
 
 diff --git a/mods/spaces-chat/main.js b/mods/spaces-chat/main.js
-index 7f9db262..b2acb168 100644
+index 801e4a5e..23ebb634 100644
 --- a/mods/spaces-chat/main.js
 +++ b/mods/spaces-chat/main.js
 @@ -14,9 +14,9 @@
@@ -24,7 +24,7 @@ index 7f9db262..b2acb168 100644
  import { sectionsOf, sectionOf, iconOf, placeSpace, foldSection, prune, data, pin, foldPinned, machineLook, restoreSection } from "./sections.js";
  import { Menu, openMenu, rectOf } from "./popups.js";
  import { IconPicker } from "./icon.js";
-@@ -76,6 +76,9 @@ const FALLBACK = 60000;
+@@ -78,6 +78,9 @@ const FALLBACK = 60000;
  // that draws space avatars): one strong color per hue, light and dark alike.
  const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
  
@@ -34,7 +34,7 @@ index 7f9db262..b2acb168 100644
  // A space speaks up only when something in it needs you.
  export function glyph(status) {
    return status === "blocked" || status === "done" ? "●" : "·";
-@@ -740,8 +743,8 @@ export default class Spaces extends View {
+@@ -755,8 +758,8 @@ export default class Spaces extends View {
              .when(quiet && Boolean(iconOf(w.id)), (el) => el.opacity(0.5)).child(iconOf(w.id) ?? "#")))
            .child(nameText(name, fresh, quiet ? t.dim : w.active ? t.foreground : t.muted, t))
            .when(Boolean(this.pilotMark(w, t)), (el) => el.child(this.pilotMark(w, t)))

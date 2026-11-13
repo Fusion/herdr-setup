@@ -9,7 +9,7 @@ Subject: [PATCH 13/19] local: sidebar row shows a green dot when work finished
  1 file changed, 23 insertions(+), 2 deletions(-)
 
 diff --git a/mods/spaces-chat/main.js b/mods/spaces-chat/main.js
-index b2acb168..797b5e2c 100644
+index 23ebb634..95fcee5a 100644
 --- a/mods/spaces-chat/main.js
 +++ b/mods/spaces-chat/main.js
 @@ -13,8 +13,8 @@
@@ -23,7 +23,7 @@ index b2acb168..797b5e2c 100644
  import { countsByTab, readyByTab } from "./inbox.js";
  import { spacesWithChats, chatAgents } from "./parked.js";
  import { sectionsOf, sectionOf, iconOf, placeSpace, foldSection, prune, data, pin, foldPinned, machineLook, restoreSection } from "./sections.js";
-@@ -78,6 +78,25 @@ const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b
+@@ -80,6 +80,25 @@ const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b
  
  // local: some agent in the space works now (its status shows only the most urgent: a done agent hides a working one).
  const working = (w) => w.status === "working" || [...agents(), ...chatAgents()].some((a) => a.space === w.id && a.status === "working");
@@ -49,7 +49,7 @@ index b2acb168..797b5e2c 100644
  
  // A space speaks up only when something in it needs you.
  export function glyph(status) {
-@@ -745,6 +764,8 @@ export default class Spaces extends View {
+@@ -760,6 +779,8 @@ export default class Spaces extends View {
            .when(Boolean(this.pilotMark(w, t)), (el) => el.child(this.pilotMark(w, t)))
            // local: an agent in this space is working (any, also behind a done one): a small breathing dot.
            .when(working(w), (el) => el.child(div().id(`working-${w.id}`).size(6).rounded(3).flex_none().bg(t.working).loop("opacity", { from: 0.35, to: 1, period: 1200 })))

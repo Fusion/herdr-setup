@@ -10,7 +10,7 @@ Subject: [PATCH 14/19] local: right-click a pane header to rename it (core
  2 files changed, 14 insertions(+), 3 deletions(-)
 
 diff --git a/mods/pane-chat/main.js b/mods/pane-chat/main.js
-index 3dd53f24..85ac6a45 100644
+index daba613f..24f46b8c 100644
 --- a/mods/pane-chat/main.js
 +++ b/mods/pane-chat/main.js
 @@ -15,7 +15,7 @@
@@ -20,7 +20,7 @@ index 3dd53f24..85ac6a45 100644
 -import { props, run, theme, home, exec, hc, notify, nextCommand, shared, setShared } from "herdr";
 +import { props, run, theme, home, exec, hc, notify, nextCommand, shared, setShared, openOverlay } from "herdr"; // local: openOverlay
  import { panes, terminals, spaces, inRender } from "./live.js";
- import { spaceName } from "./core/spaces.js";
+ import { spaceName, chatPane, chatLabel } from "./core/spaces.js";
  import { apSpace, apWatch, apPoll, apGroup, apHeartbeatLink, COMPACT_BELOW } from "./autopilot.js";
 @@ -27,6 +27,9 @@ import { isHermes } from "./core/hermes.js"; // local: Hermes
  

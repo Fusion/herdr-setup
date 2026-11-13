@@ -8,10 +8,10 @@ Subject: [PATCH 09/19] local: Stop sends Ctrl+C to Hermes (it ignores Esc)
  1 file changed, 2 insertions(+), 1 deletion(-)
 
 diff --git a/mods/chat/main.js b/mods/chat/main.js
-index 81c0fc46..f80baa62 100644
+index 9d023a38..8a9f7dd4 100644
 --- a/mods/chat/main.js
 +++ b/mods/chat/main.js
-@@ -1477,7 +1477,8 @@ export default class Chat extends View {
+@@ -1570,7 +1570,8 @@ export default class Chat extends View {
    stop(cx) {
      if (this.status() !== "working") return;
      this.stopping = true;

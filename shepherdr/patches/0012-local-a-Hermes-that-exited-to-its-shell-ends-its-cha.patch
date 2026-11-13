@@ -40,13 +40,13 @@ index 91c65df9..15591713 100644
  export class ChatReader {
    constructor(io, addr) {
 diff --git a/mods/chat/main.js b/mods/chat/main.js
-index 90cc68cd..e9be7e62 100644
+index fbf9e95c..1c209378 100644
 --- a/mods/chat/main.js
 +++ b/mods/chat/main.js
-@@ -1076,7 +1076,8 @@ export default class Chat extends View {
+@@ -1149,7 +1149,8 @@ export default class Chat extends View {
      const pane = this.lastPane ?? (this.slot && this.slotRec()?.pane) ?? null;
      if (!this.thread && !this.inner && !this.swapping && !t.labels?.["herdr.chat"] && pane && !panes().some((p) => p.terminal === this.addr)
-       && panes().some((p) => p.pane === pane && p.mod === "chat")) await hc(["label", this.addr, `herdr.chat=${pane}`]);
+       && panes().some((p) => p.pane === pane && p.mod === "chat")) await hc(["label", this.addr, `herdr.chat=${chatLabel(pane)}`]);
 -    const kind = KINDS[t.status?.app] ?? KINDS[t.foreground?.name] ?? (isHermes(t) ? "hermes" : undefined); // local: Hermes
 +    let kind = KINDS[t.status?.app] ?? KINDS[t.foreground?.name] ?? (isHermes(t) ? "hermes" : undefined); // local: Hermes
 +    if (kind === "hermes" && !isHermes(t)) kind = undefined; // local: its last status outlives it (exited to the shell)

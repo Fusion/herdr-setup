@@ -115,19 +115,19 @@ index d37c8f83..6037711f 100644
        conv.doing = "Asking you something";
        continue;
 diff --git a/mods/chat/main.js b/mods/chat/main.js
-index f80baa62..90cc68cd 100644
+index 8a9f7dd4..fbf9e95c 100644
 --- a/mods/chat/main.js
 +++ b/mods/chat/main.js
-@@ -30,7 +30,7 @@ import * as fs from "fs/promises";
- import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names, pilotLine } from "./core/chat-log.js";
+@@ -32,7 +32,7 @@ import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names,
  import { BgJobs } from "./core/bg-jobs.js";
  import { ChatReader } from "./core/chat-reader.js";
+ import { preview } from "./core/recipe.js";
 -import { isHermes } from "./core/hermes.js"; // local: Hermes
 +import { isHermes, hermesOnScreen, hermesSteps } from "./core/hermes.js"; // local: Hermes
  import { words, howAnswered, codexOnScreen, codexSteps } from "./core/asks.js";
  // The rows' words and rules the web app's chat draws by too (core/chat-view.js).
- import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed } from "./core/chat-view.js";
-@@ -848,7 +848,7 @@ export default class Chat extends View {
+ import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, videoLine, mediaIn, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed } from "./core/chat-view.js";
+@@ -921,7 +921,7 @@ export default class Chat extends View {
      const out = [];
      for (const a of this.asks) out.push({ id: `card:${a.id}`, at: askAt(a.id), strips: this.cards.strips(a, { who: this.cli() }), owner: this.cards, ask: a, question: a.words.kind === "questions" });
      const cq = this.codexCard();
@@ -136,7 +136,7 @@ index f80baa62..90cc68cd 100644
      for (const a of this.sasks ?? []) {
        if (!a.kept) out.push({ id: `card:s:${a.name}`, at: this.seenAt(`s:${a.address}|${a.name}`), strips: this.secretCards.strips(a, { who: this.cli() }) });
      }
-@@ -925,7 +925,7 @@ export default class Chat extends View {
+@@ -998,7 +998,7 @@ export default class Chat extends View {
    // an AskUserQuestion request for the question card; the same object while it stays open, so
    // the card keeps its picks.
    codexCard() {
@@ -145,7 +145,7 @@ index f80baa62..90cc68cd 100644
      const x = [...(this.conv?.items ?? [])].reverse().find((i) => i.kind === "ask");
      if (!x || x.closed || !x.questions?.length) return null;
      if (this.codexAsk?.item === x) return this.codexAsk;
-@@ -944,8 +944,10 @@ export default class Chat extends View {
+@@ -1017,8 +1017,10 @@ export default class Chat extends View {
      const qs = ask.item.questions, map = d.updatedInput?.answers;
      cx.spawn(async (cx) => {
        const screen = (await hc(["read", this.addr]).catch(() => null))?.stdout ?? "";

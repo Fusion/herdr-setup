@@ -37,7 +37,7 @@ index 63c186c0..50dc68b9 100644
      else if (it[1] === "worktree") openOverlay({ mod: "worktree", kind: "dialog", ...(it[2].action === "open" ? { width: 560, height: 480 } : { width: 440, height: 260 }), props: it[2] });
      else run(it[1], it[2]);
 diff --git a/mods/pane-chat/main.js b/mods/pane-chat/main.js
-index 85ac6a45..f9c46de9 100644
+index 24f46b8c..3ea32f81 100644
 --- a/mods/pane-chat/main.js
 +++ b/mods/pane-chat/main.js
 @@ -266,10 +266,10 @@ export default class Pane extends View {

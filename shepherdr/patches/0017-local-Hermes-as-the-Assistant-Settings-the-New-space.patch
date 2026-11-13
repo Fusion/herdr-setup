@@ -8,28 +8,28 @@ Subject: [PATCH 17/19] local: Hermes as the Assistant: Settings, the New space
  core/agents.js                         |  10 +-
  core/hermes.js                         |  26 +++
  lib/COPIES                             |   2 +-
- lib/settings.js                        |   7 +
+ lib/settings.js                        |   8 +-
  mods/chat-models/core/agents.js        |  10 +-
  mods/chat-models/core/hermes.js        | 267 +++++++++++++++++++++++++
  mods/chat-models/main.js               |   2 +-
  mods/chat/core/agents.js               |  10 +-
  mods/chat/core/hermes.js               |  26 +++
  mods/chat/main.js                      |   7 +-
- mods/chat/settings.js                  |   7 +
+ mods/chat/settings.js                  |   8 +-
  mods/coordinator/core/agents.js        |  10 +-
  mods/coordinator/core/hermes.js        | 267 +++++++++++++++++++++++++
  mods/newspace/core/agents.js           |  10 +-
  mods/newspace/core/hermes.js           | 267 +++++++++++++++++++++++++
- mods/newspace/settings.js              |   7 +
+ mods/newspace/settings.js              |   8 +-
  mods/pane-chat/core/hermes.js          |  26 +++
  mods/shepherdr-settings/core/agents.js |  10 +-
  mods/shepherdr-settings/core/hermes.js | 267 +++++++++++++++++++++++++
  mods/shepherdr-settings/main.js        |   4 +-
- mods/shepherdr-settings/settings.js    |   7 +
+ mods/shepherdr-settings/settings.js    |   8 +-
  mods/tasks/bin/herdr_task/settings.py  |   3 +
  test/hermes.test.js                    |  19 ++
- test/test_hermes_settings.py           |  21 ++
- 24 files changed, 1274 insertions(+), 18 deletions(-)
+ test/test_hermes_settings.py           |  22 ++
+ 24 files changed, 1275 insertions(+), 22 deletions(-)
  create mode 100644 mods/chat-models/core/hermes.js
  create mode 100644 mods/coordinator/core/hermes.js
  create mode 100644 mods/newspace/core/hermes.js
@@ -37,7 +37,7 @@ Subject: [PATCH 17/19] local: Hermes as the Assistant: Settings, the New space
  create mode 100644 test/test_hermes_settings.py
 
 diff --git a/core/agents.js b/core/agents.js
-index 572c3762..24a2bd3a 100644
+index 4637d6e8..d49c5777 100644
 --- a/core/agents.js
 +++ b/core/agents.js
 @@ -2,7 +2,8 @@
@@ -50,7 +50,7 @@ index 572c3762..24a2bd3a 100644
  
  // Claude Code's current models, as its /model menu offers them. `id` is what --model gets;
  // `match` the names a running agent may report for it.
-@@ -59,6 +60,8 @@ export const DEFAULTS = `
+@@ -69,6 +70,8 @@ export const DEFAULTS = `
  if [ "$1" = claude ]; then
    f="$HOME/.claude/settings.json"
    command -v jq >/dev/null && [ -f "$f" ] && jq -r '"model\\t\\(.model // "")", "effort\\t\\(.effortLevel // "")", "fast\\t\\(if .fastMode == true then "on" else "" end)", "per\\t\\(.modelSettings // {} | with_entries(.value |= (.effortLevel // null)) | tojson)", "mode\\t\\(.permissions.defaultMode // "")"' "$f" 2>/dev/null
@@ -59,15 +59,15 @@ index 572c3762..24a2bd3a 100644
  else
    f="$HOME/.codex/config.toml"
    for k in model model_reasoning_effort service_tier sandbox_mode approval_policy; do
-@@ -102,6 +105,7 @@ export function current(kind, argv, meta, dflt) {
+@@ -112,6 +115,7 @@ export function current(kind, argv, meta, dflt) {
    argv = argv ?? [];
    meta = meta ?? {};
    dflt = dflt ?? {};
 +  if (kind === "hermes") return hermesCurrent(argv, meta); // local: Hermes
    if (kind === "claude") {
-     const alias = flag(argv, "--model") ?? dflt.model;
-     let fast = dflt.fast;
-@@ -149,6 +153,7 @@ export function contextWords(c) {
+     // a /model in place (SHEP-181) names the row it switched to, its 1M too, which the log's turns don't say
+     const alias = meta.alias ?? flag(argv, "--model") ?? dflt.model;
+@@ -160,6 +164,7 @@ export function contextWords(c) {
  // offers (Codex: its own models_cache.json; Claude Code: its /model menu), the picker searches them.
  // `dflt` is that agent's settings (defaults()); `current` its running model, kept in the list.
  export function menuFor(agent, dflt, current = null) {
@@ -75,7 +75,7 @@ index 572c3762..24a2bd3a 100644
    if (agent === "claude") {
      const models = CLAUDE_MODELS.map((m) => ({ id: m.id, name: m.name, efforts: CLAUDE_EFFORTS,
        defaultEffort: dflt?.per?.[m.match[1].replace(/\[1m\]$/, "")] ?? dflt?.effort ?? null, fast: m.id.startsWith("opus") }));
-@@ -164,7 +169,7 @@ export function menuFor(agent, dflt, current = null) {
+@@ -175,7 +180,7 @@ export function menuFor(agent, dflt, current = null) {
  
  // The levels a model typed by id gets: its agent's usual ones.
  export function typedModel(agent, id) {
@@ -84,7 +84,7 @@ index 572c3762..24a2bd3a 100644
  }
  
  // The person's picks in the model menus (the window's and the web's alike), in PICKS_FILE under the
-@@ -322,6 +327,7 @@ export function freshArgv(kind, argv) {
+@@ -333,6 +338,7 @@ export function freshArgv(kind, argv) {
  // How to start the chosen agent: { argv, resume } (resume: argv already continues the session).
  // `session`: the old conversation's id when it can be resumed (same agent only).
  export function argvFor(pick, old) {
@@ -127,31 +127,32 @@ index 6037711f..ada25c83 100644
 +// What a worker or reviewer is offered: the same, without Hermes.
 +export const withoutHermes = (data) => (data?.menus?.hermes ? { ...data, menus: Object.fromEntries(Object.entries(data.menus).filter(([k]) => k !== "hermes")) } : data);
 diff --git a/lib/COPIES b/lib/COPIES
-index e8ec629a..a7124eb0 100644
+index 5ca9d8b3..323e5459 100644
 --- a/lib/COPIES
 +++ b/lib/COPIES
 @@ -28,7 +28,7 @@ core/person.js: chat shepherdr-settings tabs-tasks
- core/spaces.js: chat spaces-chat shepherdr-settings jump pane-chat
+ core/spaces.js: chat spaces-chat shepherdr-settings jump pane-chat tasks newspace coordinator menu-tasks new-menu-tasks tabs-tasks workspace-status-chat
  core/autopilot.js: pane-chat shepherdr-settings
  core/chat-reader.js: chat
 -core/hermes.js: chat pane-chat
 +core/hermes.js: chat pane-chat chat-models newspace shepherdr-settings coordinator
  core/clean-env.js: chat
- core/worktree.js: task-changes task-pr
- core/recipe.js: artifacts
+ core/worktree.js: task-pr
+ core/recipe.js: artifacts chat
 diff --git a/lib/settings.js b/lib/settings.js
-index caf18c66..8d0d6b2d 100644
+index a05425d4..3aabb7a1 100644
 --- a/lib/settings.js
 +++ b/lib/settings.js
-@@ -20,6 +20,7 @@ import * as fs from "fs/promises";
+@@ -20,7 +20,7 @@ import * as fs from "fs/promises";
  import * as agent from "./agent.js";
  // The button's words and the choices on offer: core/settings.js, shared with the web app's Settings.
  import { modelLabel, choicesFrom } from "./core/settings.js";
-+import { menuFor } from "./core/agents.js"; // local: Hermes
+-import { permAcross } from "./core/agents.js";
++import { permAcross, menuFor } from "./core/agents.js"; // local: menuFor (Hermes)
  
  const ROW = 31, LABEL = 110;
  const LEVEL = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra", none: "None" };
-@@ -34,6 +35,12 @@ export async function loadChoices(machine = null) {
+@@ -35,6 +35,12 @@ export async function loadChoices(machine = null) {
    const installed = Object.fromEntries(["claude", "codex"].map((k) => [k, prog(k) ? prog(k).installed !== false : k === "claude"]));
    const icons = Object.fromEntries(["claude", "codex"].map((k) => [k, { icon: prog(k)?.icon ?? null, tint: Boolean(prog(k)?.tint) }]));
    const { menus, permDefault, defaults } = choicesFrom({ claude, codex }, installed);
@@ -165,7 +166,7 @@ index caf18c66..8d0d6b2d 100644
  }
  
 diff --git a/mods/chat-models/core/agents.js b/mods/chat-models/core/agents.js
-index 572c3762..24a2bd3a 100644
+index 4637d6e8..d49c5777 100644
 --- a/mods/chat-models/core/agents.js
 +++ b/mods/chat-models/core/agents.js
 @@ -2,7 +2,8 @@
@@ -178,7 +179,7 @@ index 572c3762..24a2bd3a 100644
  
  // Claude Code's current models, as its /model menu offers them. `id` is what --model gets;
  // `match` the names a running agent may report for it.
-@@ -59,6 +60,8 @@ export const DEFAULTS = `
+@@ -69,6 +70,8 @@ export const DEFAULTS = `
  if [ "$1" = claude ]; then
    f="$HOME/.claude/settings.json"
    command -v jq >/dev/null && [ -f "$f" ] && jq -r '"model\\t\\(.model // "")", "effort\\t\\(.effortLevel // "")", "fast\\t\\(if .fastMode == true then "on" else "" end)", "per\\t\\(.modelSettings // {} | with_entries(.value |= (.effortLevel // null)) | tojson)", "mode\\t\\(.permissions.defaultMode // "")"' "$f" 2>/dev/null
@@ -187,15 +188,15 @@ index 572c3762..24a2bd3a 100644
  else
    f="$HOME/.codex/config.toml"
    for k in model model_reasoning_effort service_tier sandbox_mode approval_policy; do
-@@ -102,6 +105,7 @@ export function current(kind, argv, meta, dflt) {
+@@ -112,6 +115,7 @@ export function current(kind, argv, meta, dflt) {
    argv = argv ?? [];
    meta = meta ?? {};
    dflt = dflt ?? {};
 +  if (kind === "hermes") return hermesCurrent(argv, meta); // local: Hermes
    if (kind === "claude") {
-     const alias = flag(argv, "--model") ?? dflt.model;
-     let fast = dflt.fast;
-@@ -149,6 +153,7 @@ export function contextWords(c) {
+     // a /model in place (SHEP-181) names the row it switched to, its 1M too, which the log's turns don't say
+     const alias = meta.alias ?? flag(argv, "--model") ?? dflt.model;
+@@ -160,6 +164,7 @@ export function contextWords(c) {
  // offers (Codex: its own models_cache.json; Claude Code: its /model menu), the picker searches them.
  // `dflt` is that agent's settings (defaults()); `current` its running model, kept in the list.
  export function menuFor(agent, dflt, current = null) {
@@ -203,7 +204,7 @@ index 572c3762..24a2bd3a 100644
    if (agent === "claude") {
      const models = CLAUDE_MODELS.map((m) => ({ id: m.id, name: m.name, efforts: CLAUDE_EFFORTS,
        defaultEffort: dflt?.per?.[m.match[1].replace(/\[1m\]$/, "")] ?? dflt?.effort ?? null, fast: m.id.startsWith("opus") }));
-@@ -164,7 +169,7 @@ export function menuFor(agent, dflt, current = null) {
+@@ -175,7 +180,7 @@ export function menuFor(agent, dflt, current = null) {
  
  // The levels a model typed by id gets: its agent's usual ones.
  export function typedModel(agent, id) {
@@ -212,7 +213,7 @@ index 572c3762..24a2bd3a 100644
  }
  
  // The person's picks in the model menus (the window's and the web's alike), in PICKS_FILE under the
-@@ -322,6 +327,7 @@ export function freshArgv(kind, argv) {
+@@ -333,6 +338,7 @@ export function freshArgv(kind, argv) {
  // How to start the chosen agent: { argv, resume } (resume: argv already continues the session).
  // `session`: the old conversation's id when it can be resumed (same agent only).
  export function argvFor(pick, old) {
@@ -494,12 +495,12 @@ index 00000000..ada25c83
 +// What a worker or reviewer is offered: the same, without Hermes.
 +export const withoutHermes = (data) => (data?.menus?.hermes ? { ...data, menus: Object.fromEntries(Object.entries(data.menus).filter(([k]) => k !== "hermes")) } : data);
 diff --git a/mods/chat-models/main.js b/mods/chat-models/main.js
-index caf6c332..f1e75822 100644
+index 908d8e83..ebf3d723 100644
 --- a/mods/chat-models/main.js
 +++ b/mods/chat-models/main.js
-@@ -25,7 +25,7 @@ import { h_flex, v_flex, InputState, Input, VirtualListScrollHandle, v_virtual_l
- import { theme, props, setShared, closeOverlay, home, readTextFile, writeTextFile } from "herdr";
- import { modelSections, parsePicks, pickKey, withPin, withRecent, PICKS_FILE } from "./core/agents.js";
+@@ -26,7 +26,7 @@ import { theme, props, setShared, closeOverlay, home, readTextFile, writeTextFil
+ import { modelSections, parsePicks, pickKey, withPin, withRecent, PICKS_FILE, permAcross } from "./core/agents.js";
+ import { dirs } from "./dirs.js";
  
 -const AGENTS = ["claude", "codex"];
 +const AGENTS = ["claude", "codex", "hermes"]; // local: Hermes (offered for the Assistant only)
@@ -507,7 +508,7 @@ index caf6c332..f1e75822 100644
  // Sizes, as the chat counts them for the overlay's height (mods/chat openPicker): the model list
  // scrolls past LIST; NOTE is a quiet line (an offline machine's; a new conversation's, two lines).
 diff --git a/mods/chat/core/agents.js b/mods/chat/core/agents.js
-index 572c3762..24a2bd3a 100644
+index 4637d6e8..d49c5777 100644
 --- a/mods/chat/core/agents.js
 +++ b/mods/chat/core/agents.js
 @@ -2,7 +2,8 @@
@@ -520,7 +521,7 @@ index 572c3762..24a2bd3a 100644
  
  // Claude Code's current models, as its /model menu offers them. `id` is what --model gets;
  // `match` the names a running agent may report for it.
-@@ -59,6 +60,8 @@ export const DEFAULTS = `
+@@ -69,6 +70,8 @@ export const DEFAULTS = `
  if [ "$1" = claude ]; then
    f="$HOME/.claude/settings.json"
    command -v jq >/dev/null && [ -f "$f" ] && jq -r '"model\\t\\(.model // "")", "effort\\t\\(.effortLevel // "")", "fast\\t\\(if .fastMode == true then "on" else "" end)", "per\\t\\(.modelSettings // {} | with_entries(.value |= (.effortLevel // null)) | tojson)", "mode\\t\\(.permissions.defaultMode // "")"' "$f" 2>/dev/null
@@ -529,15 +530,15 @@ index 572c3762..24a2bd3a 100644
  else
    f="$HOME/.codex/config.toml"
    for k in model model_reasoning_effort service_tier sandbox_mode approval_policy; do
-@@ -102,6 +105,7 @@ export function current(kind, argv, meta, dflt) {
+@@ -112,6 +115,7 @@ export function current(kind, argv, meta, dflt) {
    argv = argv ?? [];
    meta = meta ?? {};
    dflt = dflt ?? {};
 +  if (kind === "hermes") return hermesCurrent(argv, meta); // local: Hermes
    if (kind === "claude") {
-     const alias = flag(argv, "--model") ?? dflt.model;
-     let fast = dflt.fast;
-@@ -149,6 +153,7 @@ export function contextWords(c) {
+     // a /model in place (SHEP-181) names the row it switched to, its 1M too, which the log's turns don't say
+     const alias = meta.alias ?? flag(argv, "--model") ?? dflt.model;
+@@ -160,6 +164,7 @@ export function contextWords(c) {
  // offers (Codex: its own models_cache.json; Claude Code: its /model menu), the picker searches them.
  // `dflt` is that agent's settings (defaults()); `current` its running model, kept in the list.
  export function menuFor(agent, dflt, current = null) {
@@ -545,7 +546,7 @@ index 572c3762..24a2bd3a 100644
    if (agent === "claude") {
      const models = CLAUDE_MODELS.map((m) => ({ id: m.id, name: m.name, efforts: CLAUDE_EFFORTS,
        defaultEffort: dflt?.per?.[m.match[1].replace(/\[1m\]$/, "")] ?? dflt?.effort ?? null, fast: m.id.startsWith("opus") }));
-@@ -164,7 +169,7 @@ export function menuFor(agent, dflt, current = null) {
+@@ -175,7 +180,7 @@ export function menuFor(agent, dflt, current = null) {
  
  // The levels a model typed by id gets: its agent's usual ones.
  export function typedModel(agent, id) {
@@ -554,7 +555,7 @@ index 572c3762..24a2bd3a 100644
  }
  
  // The person's picks in the model menus (the window's and the web's alike), in PICKS_FILE under the
-@@ -322,6 +327,7 @@ export function freshArgv(kind, argv) {
+@@ -333,6 +338,7 @@ export function freshArgv(kind, argv) {
  // How to start the chosen agent: { argv, resume } (resume: argv already continues the session).
  // `session`: the old conversation's id when it can be resumed (same agent only).
  export function argvFor(pick, old) {
@@ -597,19 +598,19 @@ index 6037711f..ada25c83 100644
 +// What a worker or reviewer is offered: the same, without Hermes.
 +export const withoutHermes = (data) => (data?.menus?.hermes ? { ...data, menus: Object.fromEntries(Object.entries(data.menus).filter(([k]) => k !== "hermes")) } : data);
 diff --git a/mods/chat/main.js b/mods/chat/main.js
-index e9be7e62..269400f8 100644
+index 1c209378..f1dc11a5 100644
 --- a/mods/chat/main.js
 +++ b/mods/chat/main.js
-@@ -30,7 +30,7 @@ import * as fs from "fs/promises";
- import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names, pilotLine } from "./core/chat-log.js";
+@@ -32,7 +32,7 @@ import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names,
  import { BgJobs } from "./core/bg-jobs.js";
  import { ChatReader } from "./core/chat-reader.js";
+ import { preview } from "./core/recipe.js";
 -import { isHermes, hermesOnScreen, hermesSteps } from "./core/hermes.js"; // local: Hermes
 +import { isHermes, hermesOnScreen, hermesSteps, withoutHermes } from "./core/hermes.js"; // local: Hermes
  import { words, howAnswered, codexOnScreen, codexSteps } from "./core/asks.js";
  // The rows' words and rules the web app's chat draws by too (core/chat-view.js).
- import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed } from "./core/chat-view.js";
-@@ -1717,7 +1717,8 @@ export default class Chat extends View {
+ import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, videoLine, mediaIn, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed } from "./core/chat-view.js";
+@@ -1812,7 +1812,8 @@ export default class Chat extends View {
      this.choice = { sel: null, data: null };
      cx.spawn(async (cx) => {
        try {
@@ -619,7 +620,7 @@ index e9be7e62..269400f8 100644
          let kept = null;
          try { kept = JSON.parse(localStorage.getItem(`choice:${this.slot}`) ?? "null"); } catch {}
          const st = kept?.agent ? kept : props()?.settings;
-@@ -2587,7 +2588,7 @@ export default class Chat extends View {
+@@ -2721,7 +2722,7 @@ export default class Chat extends View {
            at: at ? { x: Math.max(8, at.x - W + 90), y: Math.max(8, at.y - H - 10) } : "pointer",
            props: { pane: this.pickKey(), offline, width: W, height: H, select: name ? findModel(menus, name) : null,
              current: { agent: c.agent, model: currentRow, effort: c.effort ?? null, fast: c.fast, perm: c.perm ?? null },
@@ -629,18 +630,19 @@ index e9be7e62..269400f8 100644
          this.picking = false;
          cx.notify();
 diff --git a/mods/chat/settings.js b/mods/chat/settings.js
-index caf18c66..8d0d6b2d 100644
+index a05425d4..3aabb7a1 100644
 --- a/mods/chat/settings.js
 +++ b/mods/chat/settings.js
-@@ -20,6 +20,7 @@ import * as fs from "fs/promises";
+@@ -20,7 +20,7 @@ import * as fs from "fs/promises";
  import * as agent from "./agent.js";
  // The button's words and the choices on offer: core/settings.js, shared with the web app's Settings.
  import { modelLabel, choicesFrom } from "./core/settings.js";
-+import { menuFor } from "./core/agents.js"; // local: Hermes
+-import { permAcross } from "./core/agents.js";
++import { permAcross, menuFor } from "./core/agents.js"; // local: menuFor (Hermes)
  
  const ROW = 31, LABEL = 110;
  const LEVEL = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra", none: "None" };
-@@ -34,6 +35,12 @@ export async function loadChoices(machine = null) {
+@@ -35,6 +35,12 @@ export async function loadChoices(machine = null) {
    const installed = Object.fromEntries(["claude", "codex"].map((k) => [k, prog(k) ? prog(k).installed !== false : k === "claude"]));
    const icons = Object.fromEntries(["claude", "codex"].map((k) => [k, { icon: prog(k)?.icon ?? null, tint: Boolean(prog(k)?.tint) }]));
    const { menus, permDefault, defaults } = choicesFrom({ claude, codex }, installed);
@@ -654,7 +656,7 @@ index caf18c66..8d0d6b2d 100644
  }
  
 diff --git a/mods/coordinator/core/agents.js b/mods/coordinator/core/agents.js
-index 572c3762..24a2bd3a 100644
+index 4637d6e8..d49c5777 100644
 --- a/mods/coordinator/core/agents.js
 +++ b/mods/coordinator/core/agents.js
 @@ -2,7 +2,8 @@
@@ -667,7 +669,7 @@ index 572c3762..24a2bd3a 100644
  
  // Claude Code's current models, as its /model menu offers them. `id` is what --model gets;
  // `match` the names a running agent may report for it.
-@@ -59,6 +60,8 @@ export const DEFAULTS = `
+@@ -69,6 +70,8 @@ export const DEFAULTS = `
  if [ "$1" = claude ]; then
    f="$HOME/.claude/settings.json"
    command -v jq >/dev/null && [ -f "$f" ] && jq -r '"model\\t\\(.model // "")", "effort\\t\\(.effortLevel // "")", "fast\\t\\(if .fastMode == true then "on" else "" end)", "per\\t\\(.modelSettings // {} | with_entries(.value |= (.effortLevel // null)) | tojson)", "mode\\t\\(.permissions.defaultMode // "")"' "$f" 2>/dev/null
@@ -676,15 +678,15 @@ index 572c3762..24a2bd3a 100644
  else
    f="$HOME/.codex/config.toml"
    for k in model model_reasoning_effort service_tier sandbox_mode approval_policy; do
-@@ -102,6 +105,7 @@ export function current(kind, argv, meta, dflt) {
+@@ -112,6 +115,7 @@ export function current(kind, argv, meta, dflt) {
    argv = argv ?? [];
    meta = meta ?? {};
    dflt = dflt ?? {};
 +  if (kind === "hermes") return hermesCurrent(argv, meta); // local: Hermes
    if (kind === "claude") {
-     const alias = flag(argv, "--model") ?? dflt.model;
-     let fast = dflt.fast;
-@@ -149,6 +153,7 @@ export function contextWords(c) {
+     // a /model in place (SHEP-181) names the row it switched to, its 1M too, which the log's turns don't say
+     const alias = meta.alias ?? flag(argv, "--model") ?? dflt.model;
+@@ -160,6 +164,7 @@ export function contextWords(c) {
  // offers (Codex: its own models_cache.json; Claude Code: its /model menu), the picker searches them.
  // `dflt` is that agent's settings (defaults()); `current` its running model, kept in the list.
  export function menuFor(agent, dflt, current = null) {
@@ -692,7 +694,7 @@ index 572c3762..24a2bd3a 100644
    if (agent === "claude") {
      const models = CLAUDE_MODELS.map((m) => ({ id: m.id, name: m.name, efforts: CLAUDE_EFFORTS,
        defaultEffort: dflt?.per?.[m.match[1].replace(/\[1m\]$/, "")] ?? dflt?.effort ?? null, fast: m.id.startsWith("opus") }));
-@@ -164,7 +169,7 @@ export function menuFor(agent, dflt, current = null) {
+@@ -175,7 +180,7 @@ export function menuFor(agent, dflt, current = null) {
  
  // The levels a model typed by id gets: its agent's usual ones.
  export function typedModel(agent, id) {
@@ -701,7 +703,7 @@ index 572c3762..24a2bd3a 100644
  }
  
  // The person's picks in the model menus (the window's and the web's alike), in PICKS_FILE under the
-@@ -322,6 +327,7 @@ export function freshArgv(kind, argv) {
+@@ -333,6 +338,7 @@ export function freshArgv(kind, argv) {
  // How to start the chosen agent: { argv, resume } (resume: argv already continues the session).
  // `session`: the old conversation's id when it can be resumed (same agent only).
  export function argvFor(pick, old) {
@@ -983,7 +985,7 @@ index 00000000..ada25c83
 +// What a worker or reviewer is offered: the same, without Hermes.
 +export const withoutHermes = (data) => (data?.menus?.hermes ? { ...data, menus: Object.fromEntries(Object.entries(data.menus).filter(([k]) => k !== "hermes")) } : data);
 diff --git a/mods/newspace/core/agents.js b/mods/newspace/core/agents.js
-index 572c3762..24a2bd3a 100644
+index 4637d6e8..d49c5777 100644
 --- a/mods/newspace/core/agents.js
 +++ b/mods/newspace/core/agents.js
 @@ -2,7 +2,8 @@
@@ -996,7 +998,7 @@ index 572c3762..24a2bd3a 100644
  
  // Claude Code's current models, as its /model menu offers them. `id` is what --model gets;
  // `match` the names a running agent may report for it.
-@@ -59,6 +60,8 @@ export const DEFAULTS = `
+@@ -69,6 +70,8 @@ export const DEFAULTS = `
  if [ "$1" = claude ]; then
    f="$HOME/.claude/settings.json"
    command -v jq >/dev/null && [ -f "$f" ] && jq -r '"model\\t\\(.model // "")", "effort\\t\\(.effortLevel // "")", "fast\\t\\(if .fastMode == true then "on" else "" end)", "per\\t\\(.modelSettings // {} | with_entries(.value |= (.effortLevel // null)) | tojson)", "mode\\t\\(.permissions.defaultMode // "")"' "$f" 2>/dev/null
@@ -1005,15 +1007,15 @@ index 572c3762..24a2bd3a 100644
  else
    f="$HOME/.codex/config.toml"
    for k in model model_reasoning_effort service_tier sandbox_mode approval_policy; do
-@@ -102,6 +105,7 @@ export function current(kind, argv, meta, dflt) {
+@@ -112,6 +115,7 @@ export function current(kind, argv, meta, dflt) {
    argv = argv ?? [];
    meta = meta ?? {};
    dflt = dflt ?? {};
 +  if (kind === "hermes") return hermesCurrent(argv, meta); // local: Hermes
    if (kind === "claude") {
-     const alias = flag(argv, "--model") ?? dflt.model;
-     let fast = dflt.fast;
-@@ -149,6 +153,7 @@ export function contextWords(c) {
+     // a /model in place (SHEP-181) names the row it switched to, its 1M too, which the log's turns don't say
+     const alias = meta.alias ?? flag(argv, "--model") ?? dflt.model;
+@@ -160,6 +164,7 @@ export function contextWords(c) {
  // offers (Codex: its own models_cache.json; Claude Code: its /model menu), the picker searches them.
  // `dflt` is that agent's settings (defaults()); `current` its running model, kept in the list.
  export function menuFor(agent, dflt, current = null) {
@@ -1021,7 +1023,7 @@ index 572c3762..24a2bd3a 100644
    if (agent === "claude") {
      const models = CLAUDE_MODELS.map((m) => ({ id: m.id, name: m.name, efforts: CLAUDE_EFFORTS,
        defaultEffort: dflt?.per?.[m.match[1].replace(/\[1m\]$/, "")] ?? dflt?.effort ?? null, fast: m.id.startsWith("opus") }));
-@@ -164,7 +169,7 @@ export function menuFor(agent, dflt, current = null) {
+@@ -175,7 +180,7 @@ export function menuFor(agent, dflt, current = null) {
  
  // The levels a model typed by id gets: its agent's usual ones.
  export function typedModel(agent, id) {
@@ -1030,7 +1032,7 @@ index 572c3762..24a2bd3a 100644
  }
  
  // The person's picks in the model menus (the window's and the web's alike), in PICKS_FILE under the
-@@ -322,6 +327,7 @@ export function freshArgv(kind, argv) {
+@@ -333,6 +338,7 @@ export function freshArgv(kind, argv) {
  // How to start the chosen agent: { argv, resume } (resume: argv already continues the session).
  // `session`: the old conversation's id when it can be resumed (same agent only).
  export function argvFor(pick, old) {
@@ -1312,18 +1314,19 @@ index 00000000..ada25c83
 +// What a worker or reviewer is offered: the same, without Hermes.
 +export const withoutHermes = (data) => (data?.menus?.hermes ? { ...data, menus: Object.fromEntries(Object.entries(data.menus).filter(([k]) => k !== "hermes")) } : data);
 diff --git a/mods/newspace/settings.js b/mods/newspace/settings.js
-index caf18c66..8d0d6b2d 100644
+index a05425d4..3aabb7a1 100644
 --- a/mods/newspace/settings.js
 +++ b/mods/newspace/settings.js
-@@ -20,6 +20,7 @@ import * as fs from "fs/promises";
+@@ -20,7 +20,7 @@ import * as fs from "fs/promises";
  import * as agent from "./agent.js";
  // The button's words and the choices on offer: core/settings.js, shared with the web app's Settings.
  import { modelLabel, choicesFrom } from "./core/settings.js";
-+import { menuFor } from "./core/agents.js"; // local: Hermes
+-import { permAcross } from "./core/agents.js";
++import { permAcross, menuFor } from "./core/agents.js"; // local: menuFor (Hermes)
  
  const ROW = 31, LABEL = 110;
  const LEVEL = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra", none: "None" };
-@@ -34,6 +35,12 @@ export async function loadChoices(machine = null) {
+@@ -35,6 +35,12 @@ export async function loadChoices(machine = null) {
    const installed = Object.fromEntries(["claude", "codex"].map((k) => [k, prog(k) ? prog(k).installed !== false : k === "claude"]));
    const icons = Object.fromEntries(["claude", "codex"].map((k) => [k, { icon: prog(k)?.icon ?? null, tint: Boolean(prog(k)?.tint) }]));
    const { menus, permDefault, defaults } = choicesFrom({ claude, codex }, installed);
@@ -1371,7 +1374,7 @@ index 6037711f..ada25c83 100644
 +// What a worker or reviewer is offered: the same, without Hermes.
 +export const withoutHermes = (data) => (data?.menus?.hermes ? { ...data, menus: Object.fromEntries(Object.entries(data.menus).filter(([k]) => k !== "hermes")) } : data);
 diff --git a/mods/shepherdr-settings/core/agents.js b/mods/shepherdr-settings/core/agents.js
-index 572c3762..24a2bd3a 100644
+index 4637d6e8..d49c5777 100644
 --- a/mods/shepherdr-settings/core/agents.js
 +++ b/mods/shepherdr-settings/core/agents.js
 @@ -2,7 +2,8 @@
@@ -1384,7 +1387,7 @@ index 572c3762..24a2bd3a 100644
  
  // Claude Code's current models, as its /model menu offers them. `id` is what --model gets;
  // `match` the names a running agent may report for it.
-@@ -59,6 +60,8 @@ export const DEFAULTS = `
+@@ -69,6 +70,8 @@ export const DEFAULTS = `
  if [ "$1" = claude ]; then
    f="$HOME/.claude/settings.json"
    command -v jq >/dev/null && [ -f "$f" ] && jq -r '"model\\t\\(.model // "")", "effort\\t\\(.effortLevel // "")", "fast\\t\\(if .fastMode == true then "on" else "" end)", "per\\t\\(.modelSettings // {} | with_entries(.value |= (.effortLevel // null)) | tojson)", "mode\\t\\(.permissions.defaultMode // "")"' "$f" 2>/dev/null
@@ -1393,15 +1396,15 @@ index 572c3762..24a2bd3a 100644
  else
    f="$HOME/.codex/config.toml"
    for k in model model_reasoning_effort service_tier sandbox_mode approval_policy; do
-@@ -102,6 +105,7 @@ export function current(kind, argv, meta, dflt) {
+@@ -112,6 +115,7 @@ export function current(kind, argv, meta, dflt) {
    argv = argv ?? [];
    meta = meta ?? {};
    dflt = dflt ?? {};
 +  if (kind === "hermes") return hermesCurrent(argv, meta); // local: Hermes
    if (kind === "claude") {
-     const alias = flag(argv, "--model") ?? dflt.model;
-     let fast = dflt.fast;
-@@ -149,6 +153,7 @@ export function contextWords(c) {
+     // a /model in place (SHEP-181) names the row it switched to, its 1M too, which the log's turns don't say
+     const alias = meta.alias ?? flag(argv, "--model") ?? dflt.model;
+@@ -160,6 +164,7 @@ export function contextWords(c) {
  // offers (Codex: its own models_cache.json; Claude Code: its /model menu), the picker searches them.
  // `dflt` is that agent's settings (defaults()); `current` its running model, kept in the list.
  export function menuFor(agent, dflt, current = null) {
@@ -1409,7 +1412,7 @@ index 572c3762..24a2bd3a 100644
    if (agent === "claude") {
      const models = CLAUDE_MODELS.map((m) => ({ id: m.id, name: m.name, efforts: CLAUDE_EFFORTS,
        defaultEffort: dflt?.per?.[m.match[1].replace(/\[1m\]$/, "")] ?? dflt?.effort ?? null, fast: m.id.startsWith("opus") }));
-@@ -164,7 +169,7 @@ export function menuFor(agent, dflt, current = null) {
+@@ -175,7 +180,7 @@ export function menuFor(agent, dflt, current = null) {
  
  // The levels a model typed by id gets: its agent's usual ones.
  export function typedModel(agent, id) {
@@ -1418,7 +1421,7 @@ index 572c3762..24a2bd3a 100644
  }
  
  // The person's picks in the model menus (the window's and the web's alike), in PICKS_FILE under the
-@@ -322,6 +327,7 @@ export function freshArgv(kind, argv) {
+@@ -333,6 +338,7 @@ export function freshArgv(kind, argv) {
  // How to start the chosen agent: { argv, resume } (resume: argv already continues the session).
  // `session`: the old conversation's id when it can be resumed (same agent only).
  export function argvFor(pick, old) {
@@ -1700,7 +1703,7 @@ index 00000000..ada25c83
 +// What a worker or reviewer is offered: the same, without Hermes.
 +export const withoutHermes = (data) => (data?.menus?.hermes ? { ...data, menus: Object.fromEntries(Object.entries(data.menus).filter(([k]) => k !== "hermes")) } : data);
 diff --git a/mods/shepherdr-settings/main.js b/mods/shepherdr-settings/main.js
-index 5bc6a8f0..513cdf08 100644
+index bad708e2..0e45a475 100644
 --- a/mods/shepherdr-settings/main.js
 +++ b/mods/shepherdr-settings/main.js
 @@ -29,6 +29,7 @@ import { branchInit, branchRow } from "./branch-names.js";
@@ -1711,7 +1714,7 @@ index 5bc6a8f0..513cdf08 100644
  import { NOTIFY, NOTIFY_DEFAULT, notifyMachine, notifyMachineOwn, notifyOf, notifyOwn, notifyEverywhere,
    setNotifyEverywhere, setNotifyMachine, setNotify } from "./notify.js";
  import { machinesSection } from "./machines-section.js";
-@@ -324,7 +325,8 @@ export default class ShepherdrSettings extends View {
+@@ -327,7 +328,8 @@ export default class ShepherdrSettings extends View {
          sel = { agent: o, model: this.data.menus[o].models[0]?.id ?? null, effort: null, fast: false, perm: this.data.permDefault?.[o] ?? null };
        }
        sel ??= this.data?.defaults ?? null;
@@ -1722,18 +1725,19 @@ index 5bc6a8f0..513cdf08 100644
    }
  
 diff --git a/mods/shepherdr-settings/settings.js b/mods/shepherdr-settings/settings.js
-index caf18c66..8d0d6b2d 100644
+index a05425d4..3aabb7a1 100644
 --- a/mods/shepherdr-settings/settings.js
 +++ b/mods/shepherdr-settings/settings.js
-@@ -20,6 +20,7 @@ import * as fs from "fs/promises";
+@@ -20,7 +20,7 @@ import * as fs from "fs/promises";
  import * as agent from "./agent.js";
  // The button's words and the choices on offer: core/settings.js, shared with the web app's Settings.
  import { modelLabel, choicesFrom } from "./core/settings.js";
-+import { menuFor } from "./core/agents.js"; // local: Hermes
+-import { permAcross } from "./core/agents.js";
++import { permAcross, menuFor } from "./core/agents.js"; // local: menuFor (Hermes)
  
  const ROW = 31, LABEL = 110;
  const LEVEL = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra", none: "None" };
-@@ -34,6 +35,12 @@ export async function loadChoices(machine = null) {
+@@ -35,6 +35,12 @@ export async function loadChoices(machine = null) {
    const installed = Object.fromEntries(["claude", "codex"].map((k) => [k, prog(k) ? prog(k).installed !== false : k === "claude"]));
    const icons = Object.fromEntries(["claude", "codex"].map((k) => [k, { icon: prog(k)?.icon ?? null, tint: Boolean(prog(k)?.tint) }]));
    const { menus, permDefault, defaults } = choicesFrom({ claude, codex }, installed);
@@ -1747,10 +1751,10 @@ index caf18c66..8d0d6b2d 100644
  }
  
 diff --git a/mods/tasks/bin/herdr_task/settings.py b/mods/tasks/bin/herdr_task/settings.py
-index 62075dff..58e226c5 100644
+index c6031493..5e14779a 100644
 --- a/mods/tasks/bin/herdr_task/settings.py
 +++ b/mods/tasks/bin/herdr_task/settings.py
-@@ -193,6 +193,9 @@ def argv_for(pick):
+@@ -195,6 +195,9 @@ def argv_for(pick):
          elif perm:
              a += ["-s", "workspace-write", "-a", "on-request"]
          return a
@@ -1789,12 +1793,13 @@ index 0b783412..2e254f06 100644
 +});
 diff --git a/test/test_hermes_settings.py b/test/test_hermes_settings.py
 new file mode 100644
-index 00000000..a2e380a2
+index 00000000..2bb2e481
 --- /dev/null
 +++ b/test/test_hermes_settings.py
-@@ -0,0 +1,21 @@
+@@ -0,0 +1,22 @@
 +"""local: Hermes as the Assistant: herdr-task's argv_for turns Settings' coordinator choice into a hermes command,
 +the same as core/hermes.js hermesArgv (test/hermes.test.js)."""
++import home_guard  # noqa: F401  (first: every test on a throwaway home, never the real one)
 +import os
 +import sys
 +import unittest
