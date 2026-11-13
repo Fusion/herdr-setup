@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Chris F Ravenscroft <chris@voilaweb.com>
 Date: Thu, 12 Nov 2026 16:31:23 -0800
-Subject: [PATCH 20/20] local: Switch agent from a tab keeps an agent behind
+Subject: [PATCH 20/21] local: Switch agent from a tab keeps an agent behind
  its chat (its slot's pane when herdr.chat was lost)
 
 ---

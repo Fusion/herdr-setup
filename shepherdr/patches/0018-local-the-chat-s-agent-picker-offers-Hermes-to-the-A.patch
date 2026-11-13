@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Chris F Ravenscroft <chris@voilaweb.com>
 Date: Thu, 12 Nov 2026 15:44:02 -0800
-Subject: [PATCH 18/20] local: the chat's agent picker offers Hermes to the
+Subject: [PATCH 18/21] local: the chat's agent picker offers Hermes to the
  Assistant (upstream now starts the tab's Switch agent without setsid)
 
 ---

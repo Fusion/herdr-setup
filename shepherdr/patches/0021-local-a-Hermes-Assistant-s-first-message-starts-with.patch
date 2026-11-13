@@ -1,0 +1,164 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chris F Ravenscroft <chris@voilaweb.com>
+Date: Thu, 12 Nov 2026 17:02:07 -0800
+Subject: [PATCH 21/21] local: a Hermes Assistant's first message starts with
+ its terminal's HC_* variables as an export line (hermes-env.sh): Hermes runs
+ its commands in its gateway, without them
+
+---
+ mods/chat/main.js              | 17 +++++++++++---
+ mods/coordinator/hermes-env.sh | 22 ++++++++++++++++++
+ mods/coordinator/restart.sh    | 10 ++++++++-
+ test/hermes-env.test.js        | 41 ++++++++++++++++++++++++++++++++++
+ 4 files changed, 86 insertions(+), 4 deletions(-)
+ create mode 100644 mods/coordinator/hermes-env.sh
+ create mode 100644 test/hermes-env.test.js
+
+diff --git a/mods/chat/main.js b/mods/chat/main.js
+index fbc75dd5..dae42043 100644
+--- a/mods/chat/main.js
++++ b/mods/chat/main.js
+@@ -1363,7 +1363,7 @@ export default class Chat extends View {
+         if (k && (starting(k) || openCard(this.addr))) { await this.screens.tick(this.addr, k); cx.notify(); }
+         // The first message hc couldn't hand over (startAgent): once the agent is idle with no screen to answer.
+         if (this.firstSend && k?.turn > 0) this.firstSend = null;
+-        if (this.firstSend && k?.status?.state === "idle" && !openCard(this.addr)) {
++        if (this.firstSend && (k?.status?.state === "idle" || (!k?.status && this.firstSendBy && Date.now() > this.firstSendBy)) && !openCard(this.addr)) { // local: firstSendBy
+           const text = this.firstSend;
+           this.firstSend = null;
+           const sent = await personHc(["send", this.addr, text]).catch(() => null);
+@@ -1746,7 +1746,9 @@ export default class Chat extends View {
+         if (body.trim() && cmd) {
+           words = body.trim();
+           oneOff = `herdr-${template}-${Date.now().toString(36)}`;
+-          const file = `---\nname: ${oneOff}\ndescription: A one-off ${template} start with chosen settings (mods/chat), removed after use.\ncommand: ${cleanCommand(cmd)}\n---\n${body}`;
++          // local: Hermes's first message is sent below (this.firstSend), once its own HC_* variables can be read
++          const hermes = st?.agent === "hermes" && there;
++          const file = `---\nname: ${oneOff}\ndescription: A one-off ${template} start with chosen settings (mods/chat), removed after use.\ncommand: ${cleanCommand(cmd)}\n---\n${hermes ? "" : body}`; // local: hermes
+           await exec("sh", ["-c", TEMPLATE + 'printf "%s" "$2" > "$dir/$1.md"', "x", oneOff, file], on);
+           launch = oneOff;
+         }
+@@ -1756,7 +1758,7 @@ export default class Chat extends View {
+         "--label", `herdr.role=${this.role}`,
+         ...(space ? ["--label", `herdr.coordinator.space=${String(space.id).split("/").pop()}`] : []),
+         ...(rec?.tab ? ["--label", `herdr.coordinator.tab=${String(rec.tab).split("/").pop()}`] : []),
+-        launch, ...(task ? [task] : [])];
++        launch, ...(task && !(st?.agent === "hermes" && there && oneOff) ? [task] : [])]; // local: Hermes's task goes with its first message
+       const r = await hc(args).catch((e) => ({ code: 1, stderr: String(e?.message ?? e), stdout: "" }));
+       if (oneOff) exec("sh", ["-c", TEMPLATE + 'rm -f "$dir/$1.md"', "x", oneOff], on);
+       let out = {};
+@@ -1768,6 +1770,15 @@ export default class Chat extends View {
+       const late = (r.code !== 0 || !out.address) && this.slotAgent();
+       if (late) out = { address: late, first_message: { sent: false } };
+       if (out.address && out.first_message?.sent === false && words) this.firstSend = [words, task].filter(Boolean).join("\n\n");
++      // local: a Hermes Assistant runs its commands without this terminal's HC_* variables (Hermes's gateway runs
++      // them): its first message starts with them as an export line (mods/coordinator/hermes-env.sh), then the
++      // template's words and the task, sent by follow() once it's idle, as for an agent hc couldn't hand them to.
++      if (out.address && st?.agent === "hermes" && there && oneOff) {
++        await cx.sleep(1500);
++        const pre = (await exec("sh", ["-c", 'bash "${HERDR_APP_HOME:-$HOME/.config/herdr-app}/mods/coordinator/hermes-env.sh" "$1"', "x", out.address], on).catch(() => null))?.stdout?.trim() ?? "";
++        this.firstSend = [pre, words, task].filter(Boolean).join("\n\n");
++        this.firstSendBy = Date.now() + 90000; // without a status by then (no ready signal), sent anyway, as restart.sh does
++      }
+       if (r.code !== 0 && !late || !out.address) {
+         p.failed = (r.stderr || r.stdout || "It didn't start.").trim();
+         toast({ title: `The ${this.role === "coordinator" ? "Assistant" : this.role} didn't start`, body: msg ? `${p.failed} Your message is back in the box.` : p.failed, level: "error" });
+diff --git a/mods/coordinator/hermes-env.sh b/mods/coordinator/hermes-env.sh
+new file mode 100644
+index 00000000..facf7dd1
+--- /dev/null
++++ b/mods/coordinator/hermes-env.sh
+@@ -0,0 +1,22 @@
++#!/usr/bin/env bash
++# local: what a Hermes Assistant's first message starts with: its terminal's Herdr variables as a ready-to-run export
++# line. Hermes runs its shell commands in its long-lived gateway, which never had this terminal's HC_TERMINAL_ID,
++# HC_TERMINAL_SOCKET and HC_SCOPE (HC_SCOPE differs per terminal), so hc get/--parent/hc wait --children break
++# without them. They are read from the terminal's own process (the hermes CLI Herdr started), once it runs.
++# Usage: hermes-env.sh <terminal>. Prints nothing when its process or the variables aren't found.
++# bash 3.2 (macOS's /bin/bash) safe.
++pid=$(hc get "$1" --json 2>/dev/null | jq -r '.foreground.pid // empty')
++[ -n "$pid" ] || exit 0
++if [ -r "/proc/$pid/environ" ]; then
++  envs=$(tr '\0' '\n' <"/proc/$pid/environ")
++else
++  envs=$(ps eww -o command= -p "$pid" 2>/dev/null | tr ' ' '\n')
++fi
++line=""
++for k in HC_TERMINAL_ID HC_TERMINAL_SOCKET HC_SCOPE; do
++  v=$(printf '%s\n' "$envs" | grep -m1 "^$k=" | cut -d= -f2-)
++  [ -n "$v" ] || exit 0
++  line+=" $k=$(printf '%q' "$v")"
++done
++printf '%s\n' "Your shell commands run in Hermes's gateway, without this terminal's Herdr variables, so hc and herdr-task can't tell who you are. Put this export line first in every shell command that runs hc or herdr-task (each command may get a fresh shell):" \
++  "" '```sh' "export$line" '```'
+diff --git a/mods/coordinator/restart.sh b/mods/coordinator/restart.sh
+index d084f5f7..4469b35d 100755
+--- a/mods/coordinator/restart.sh
++++ b/mods/coordinator/restart.sh
+@@ -138,10 +138,18 @@ else
+   one=herdr-handoff-$$
+   file=$HOME/.config/herdr-core/templates/$one.md
+   { printf -- '---\nname: %s\ndescription: A one-off Herdr handoff, removed after use.\ncommand: %s\n---\n' "$one" "$clean exec $line"
+-    printf '%s\n' "$msg"; } >"$file"
++    [ "$key" = hermes ] || printf '%s\n' "$msg"; } >"$file" # local: Hermes's message is sent below, once it runs
+   out=$(hc run --bg --json --no-parent --cwd "$cwd" "${labels[@]}" --label "herdr.agent=$key" "$one")
+   rm -f "$file"
+   new=$(jq -r '.address // empty' <<<"$out")
++  # local: Hermes runs its commands without this terminal's HC_* variables: its first message starts with them as an
++  # export line, read from its own process once it runs (hermes-env.sh), then the instructions and handoff.
++  if [ -n "$new" ] && [ "$key" = hermes ]; then
++    hc wait "$new" --timeout 90 >/dev/null 2>&1
++    pre=$(bash "${HERDR_APP_HOME:-$HOME/.config/herdr-app}/mods/coordinator/hermes-env.sh" "$new")
++    [ -n "$pre" ] && msg="$pre"$'\n\n'"$msg"
++    out='{"first_message":{"sent":false}}'
++  fi
+   # Some agents (Codex's animated start) never settle for hc: send once it reports a status.
+   if [ -n "$new" ] && [ "$(jq -r '.first_message.sent' <<<"$out")" = false ]; then
+     hc wait "$new" --timeout 90 >/dev/null 2>&1
+diff --git a/test/hermes-env.test.js b/test/hermes-env.test.js
+new file mode 100644
+index 00000000..4d03669d
+--- /dev/null
++++ b/test/hermes-env.test.js
+@@ -0,0 +1,41 @@
++// local: a Hermes Assistant's first message starts with its terminal's HC_* variables as an export line
++// (mods/coordinator/hermes-env.sh), read from the terminal's own process: Hermes runs its commands in its gateway.
++// The stand-in agent is bun, not /bin/sleep: macOS hides a system binary's environment from ps.
++import { test, expect } from "bun:test";
++import { mkdtempSync, writeFileSync, chmodSync } from "fs";
++import { tmpdir } from "os";
++import { join } from "path";
++
++const SCRIPT = join(import.meta.dir, "..", "mods", "coordinator", "hermes-env.sh");
++
++// A stand-in hc whose `get` names `pid` as the terminal's foreground process.
++function fakeHc(pid) {
++  const bin = mkdtempSync(join(tmpdir(), "hermes-env-"));
++  writeFileSync(join(bin, "hc"), `#!/bin/sh\n[ "$1" = get ] && echo '{"foreground":{"pid":${pid ?? "null"}}}'\n`);
++  chmodSync(join(bin, "hc"), 0o755);
++  return { ...process.env, PATH: `${bin}:${process.env.PATH}` };
++}
++const run = (env) => Bun.spawnSync(["/bin/bash", SCRIPT, "t9"], { env }).stdout.toString();
++
++test("the export line carries the terminal's own HC_TERMINAL_ID, HC_TERMINAL_SOCKET and HC_SCOPE", () => {
++  const agent = Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 30000)"], { env: { ...process.env, HC_TERMINAL_ID: "t9", HC_TERMINAL_SOCKET: "/tmp/herdr-core/default.sock", HC_SCOPE: "123-abc" } });
++  try {
++    Bun.sleepSync(200);
++    const out = run(fakeHc(agent.pid));
++    expect(out).toContain("Put this export line first in every shell command that runs hc or herdr-task");
++    expect(out).toContain("```sh\nexport HC_TERMINAL_ID=t9 HC_TERMINAL_SOCKET=/tmp/herdr-core/default.sock HC_SCOPE=123-abc\n```");
++  } finally {
++    agent.kill();
++  }
++});
++
++test("nothing when the process or one of the variables isn't found", () => {
++  expect(run(fakeHc(null))).toBe("");
++  const bare = Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 30000)"], { env: { PATH: process.env.PATH, HC_TERMINAL_ID: "t9" } });
++  try {
++    Bun.sleepSync(200);
++    expect(run(fakeHc(bare.pid))).toBe("");
++  } finally {
++    bare.kill();
++  }
++});
