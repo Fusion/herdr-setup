@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Chris F Ravenscroft <chris@voilaweb.com>
 Date: Thu, 12 Nov 2026 13:09:59 -0800
-Subject: [PATCH 16/18] local: a restart from a Hermes agent hands its last
+Subject: [PATCH 16/19] local: a restart from a Hermes agent hands its last
  messages to the new one (hermes-history.sh)
 
 ---

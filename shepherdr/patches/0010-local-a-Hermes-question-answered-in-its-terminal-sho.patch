@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Chris F Ravenscroft <chris@voilaweb.com>
 Date: Sun, 8 Nov 2026 23:08:40 -0800
-Subject: [PATCH 10/18] local: a Hermes question answered in its terminal shows
+Subject: [PATCH 10/19] local: a Hermes question answered in its terminal shows
  as answered, with the answer
 
 ---

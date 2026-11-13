@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Chris F Ravenscroft <chris@voilaweb.com>
 Date: Sun, 8 Nov 2026 23:00:30 -0800
-Subject: [PATCH 08/18] local: Hermes failed calls marked, clarify questions
+Subject: [PATCH 08/19] local: Hermes failed calls marked, clarify questions
  shown, plugin reports blocked on questions/permissions
 
 ---

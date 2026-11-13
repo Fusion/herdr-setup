@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Chris F Ravenscroft <chris@voilaweb.com>
 Date: Thu, 12 Nov 2026 15:44:02 -0800
-Subject: [PATCH 18/18] local: the tab's Switch agent and Restart run on macOS
+Subject: [PATCH 18/19] local: the tab's Switch agent and Restart run on macOS
  (no setsid there); the chat's agent picker offers Hermes to the Assistant
 
 ---

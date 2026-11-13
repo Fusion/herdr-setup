@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Chris F Ravenscroft <chris@voilaweb.com>
 Date: Sun, 8 Nov 2026 22:52:55 -0800
-Subject: [PATCH 07/18] local: Hermes 0.23 registry names the database session
+Subject: [PATCH 07/19] local: Hermes 0.23 registry names the database session
  id: match it exactly (resumed sessions); no tty cache
 
 ---
