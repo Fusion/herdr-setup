@@ -2,13 +2,11 @@ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Chris F Ravenscroft <chris@voilaweb.com>
 Date: Thu, 12 Nov 2026 16:31:23 -0800
 Subject: [PATCH 20/20] local: Switch agent from a tab keeps an agent behind
- its chat (its slot's pane when herdr.chat was lost); a new Hermes gets its
- first message once ready, naming its terminal
+ its chat (its slot's pane when herdr.chat was lost)
 
 ---
  lib/coordinator.js                     | 20 +++++++++++++++++---
  mods/coordinator/coordinator.js        | 20 +++++++++++++++++---
- mods/coordinator/restart.sh            |  6 +++++-
  mods/menu-tasks/coordinator.js         | 20 +++++++++++++++++---
  mods/new-menu-tasks/coordinator.js     | 20 +++++++++++++++++---
  mods/newspace/coordinator.js           | 20 +++++++++++++++++---
@@ -16,7 +14,7 @@ Subject: [PATCH 20/20] local: Switch agent from a tab keeps an agent behind
  mods/spaces-chat/coordinator.js        | 20 +++++++++++++++++---
  mods/tabs-tasks/coordinator.js         | 20 +++++++++++++++++---
  mods/tasks/coordinator.js              | 20 +++++++++++++++++---
- 10 files changed, 158 insertions(+), 28 deletions(-)
+ 9 files changed, 153 insertions(+), 27 deletions(-)
 
 diff --git a/lib/coordinator.js b/lib/coordinator.js
 index 045ab01a..77647a20 100644
@@ -96,26 +94,6 @@ index 045ab01a..77647a20 100644
  
  // Closes a tab. A coordinator with live workers asks first; a space's last tab closes the space,
  // so it asks as Close space does (our confirm, not Herdr's).
-diff --git a/mods/coordinator/restart.sh b/mods/coordinator/restart.sh
-index d084f5f7..cf70e22e 100755
---- a/mods/coordinator/restart.sh
-+++ b/mods/coordinator/restart.sh
-@@ -138,10 +138,14 @@ else
-   one=herdr-handoff-$$
-   file=$HOME/.config/herdr-core/templates/$one.md
-   { printf -- '---\nname: %s\ndescription: A one-off Herdr handoff, removed after use.\ncommand: %s\n---\n' "$one" "$clean exec $line"
--    printf '%s\n' "$msg"; } >"$file"
-+    [ "$key" = hermes ] || printf '%s\n' "$msg"; } >"$file" # local: Hermes's message goes below, naming its terminal
-   out=$(hc run --bg --json --no-parent --cwd "$cwd" "${labels[@]}" --label "herdr.agent=$key" "$one")
-   rm -f "$file"
-   new=$(jq -r '.address // empty' <<<"$out")
-+  # local: Hermes's tool shell has no HC_TERMINAL_ID: its first message says its terminal, sent once it's ready
-+  # (the herdr-core-status plugin reports idle when the CLI opens its session).
-+  [ -n "$new" ] && [ "$key" = hermes ] && msg+=$'\n\n'"Your own terminal is $new: your tool shell has no HC_TERMINAL_ID, so use $new wherever hc or herdr-task needs it." \
-+    && out='{"first_message":{"sent":false}}'
-   # Some agents (Codex's animated start) never settle for hc: send once it reports a status.
-   if [ -n "$new" ] && [ "$(jq -r '.first_message.sent' <<<"$out")" = false ]; then
-     hc wait "$new" --timeout 90 >/dev/null 2>&1
 diff --git a/mods/menu-tasks/coordinator.js b/mods/menu-tasks/coordinator.js
 index 045ab01a..77647a20 100644
 --- a/mods/menu-tasks/coordinator.js
