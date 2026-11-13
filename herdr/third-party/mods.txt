@@ -3,3 +3,6 @@
 # name  git-url  commit-or-tag  folder-in-repo  [patch in this folder, or -]  [helper: release asset prefix, or -]
 git-grapher  https://github.com/TomiXRM/git-grapher.git  v0.1.0  mods/git-grapher  -  ggit-helper
 ci-dash      https://github.com/dougcunha/herdr-mods.git  04c43e01ab5f45fcd2b42617c8fec0d3af970b89  ci-dash-app/mods/ci-dash  ci-dash.patch  -
+agent-cards     https://github.com/dougcunha/herdr-mods.git  1dc4507b2ae755b4a6fb6178ba5662d2b8f3ec12  agent-cards-app/mods/agent-cards  -  -
+copy-on-select  https://github.com/jspoynor/herdr-copy-on-select.git  ea2304a28e3bda6812048ee556c592a558320aa2  mods/copy-on-select  -  -
+t3-actions      https://github.com/JinJieBeWater/herdr-t3-actions.git  12bd093a7371345772608c5a1cef6614040aca9c  mods/t3-actions  -  -

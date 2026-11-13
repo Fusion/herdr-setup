@@ -83,6 +83,16 @@ def _doing(name: str, a: dict) -> str:
 
 
 _last = {"sid": ""}  # the session the latest hook named, for a hook that names none
+_live: dict[str, str | None] = {}  # session id -> turn_id of its turn in progress (see _say)
+# Debug trace, off by default: HERDR_STATUS_DEBUG=1 in the gateway's env. Lines: time hook state sid tty extra.
+_DEBUG = os.path.expanduser("~/Tmp/the-muse/data/herdr-status-debug.log")
+
+
+def _debug(*parts) -> None:
+    if os.environ.get("HERDR_STATUS_DEBUG") == "1":
+        import time
+        with open(_DEBUG, "a") as f:
+            f.write(" ".join(map(str, (f"{time.time():.3f}", *parts))) + "\n")
 
 
 # kw: the hook's own arguments, as one dict (some hooks pass their own `kind`).
@@ -95,7 +105,20 @@ def _say(state: str, block: str | None, msg: str | None, kw: dict) -> None:
     if not sid:
         return
     kind = block
+    hook, turn = kw.get("_hook"), kw.get("turn_id")
+    # Only the live turn may say working/blocked. The post-turn background review fork shares the session id
+    # and fires pre_api_request/tool hooks AFTER post_llm_call, but never pre_llm_call or post_llm_call, so
+    # without this the robot stays "working" until the next turn. A live turn opens at pre_llm_call and
+    # closes at post_llm_call / on_session_end; a hook from any other turn_id is the fork: dropped.
+    if hook == "pre_llm_call":
+        _live[sid] = turn
+    elif state in ("idle", "error"):
+        _live.pop(sid, None)
+    elif sid not in _live or (turn and turn != _live[sid]):
+        _debug(hook, state, sid, "-", f"turn={turn}", "dropped")
+        return
     tty = _tty_of(sid)
+    _debug(hook, state, sid, tty, f"turn={turn}")
     if not tty:
         return
     rec = f"state={state}:app=hermes" + (f":kind={kind}" if kind else "")
@@ -122,12 +145,12 @@ def _opened(kw: dict) -> None:
 
 
 def register(ctx):
-    on = lambda hook, state, block=None, msg=None: ctx.register_hook(hook, lambda **kw: _say(state, block, msg, kw))
+    on = lambda hook, state, block=None, msg=None: ctx.register_hook(hook, lambda **kw: _say(state, block, msg, {**kw, "_hook": hook}))
     ctx.register_hook("on_session_open", lambda **kw: _opened(kw))
     on("pre_llm_call", "working", msg="Thinking")  # a turn starts
     on("pre_api_request", "working", msg="Thinking")
     on("post_tool_call", "working", msg="Thinking")
-    ctx.register_hook("pre_tool_call", lambda **kw: _say("working", None, _doing(str(kw.get("tool_name") or ""), kw.get("args")), kw))
+    ctx.register_hook("pre_tool_call", lambda **kw: _say("working", None, _doing(str(kw.get("tool_name") or ""), kw.get("args")), {**kw, "_hook": "pre_tool_call"}))
     on("post_llm_call", "idle")                   # once per turn, at its end
     on("pre_approval_request", "blocked", "permission")
     on("post_approval_response", "working")
@@ -137,5 +160,26 @@ def register(ctx):
     on("on_human_input_resolved", "working", msg="Thinking")
     # Fires at every turn's end with how it went: a failed turn (not one you stopped) is an error,
     # which Herdr shows as needing you and the sidebar as a red dot.
-    ctx.register_hook("on_session_end", lambda **kw: _say("error", None, "The turn failed", kw)
-                      if kw.get("failed") and not kw.get("interrupted") else _say("idle", None, None, kw))
+    ctx.register_hook("on_session_end", lambda **kw: _say("error", None, "The turn failed", {**kw, "_hook": "on_session_end"})
+                      if kw.get("failed") and not kw.get("interrupted") else _say("idle", None, None, {**kw, "_hook": "on_session_end"}))
+
+
+# Self-check: python3 __init__.py. One live turn with a tool call, then the background review fork's hooks
+# (same session, its own turn_id): the tty's last record must be idle.
+if __name__ == "__main__":
+    import tempfile
+    tty = tempfile.NamedTemporaryFile("r", suffix=".tty")
+    _tty_of = lambda sid: tty.name  # noqa: F811
+    _DEBUG = "/nonexistent"  # noqa: F811
+    hooks = {}
+    register(type("Ctx", (), {"register_hook": lambda self, h, fn: hooks.__setitem__(h, fn)})())
+    live, fork = dict(session_id="s1", turn_id="s1:a"), dict(session_id="s1", turn_id="s1:b")
+    last = lambda: (tty.seek(0), tty.read().rsplit("\033]7501;", 1)[-1])[1]  # each write reopens "w": one record
+    for h, kw in [("pre_llm_call", live), ("pre_api_request", live), ("pre_tool_call", {**live, "tool_name": "terminal"})]:
+        hooks[h](**kw)
+    assert last().startswith("state=working"), last()  # the live turn says working
+    for h, kw in [("post_tool_call", live), ("pre_api_request", live), ("post_llm_call", live), ("on_session_end", live),
+                  ("pre_api_request", fork), ("pre_tool_call", {**fork, "tool_name": "memory"}), ("post_tool_call", fork)]:
+        hooks[h](**kw)
+    assert last().startswith("state=idle"), last()  # ...and the fork after it can't flip it back
+    print("ok: mid-turn working, last record after the fork =", repr(last()))
