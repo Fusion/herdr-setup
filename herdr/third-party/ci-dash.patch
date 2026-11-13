@@ -1,6 +1,6 @@
-diff -ru a/gh.js b/gh.js
---- a/gh.js	2026-11-10 13:29:07
-+++ b/gh.js	2026-11-10 13:29:07
+diff -ru -x g ci-dash/gh.js /Users/chris/.config/herdr-app/mods/ci-dash/gh.js
+--- a/gh.js	2026-11-12 18:31:26
++++ b/gh.js	2026-11-13 09:45:55
 @@ -31,10 +31,14 @@
  }
  
@@ -101,12 +101,7 @@ diff -ru a/gh.js b/gh.js
      if (!out) return { runId: null };
      try { const data = JSON.parse(out); return { runId: data.workflow_run_id ?? null }; } catch { return { runId: null }; }
    }
-@@ -132,11 +165,11 @@
-   async latestRuns(workflowId, perPage = 5) { return (await this.json(this.rp(`/actions/workflows/${workflowId}/runs?per_page=${perPage}`))).workflow_runs || []; }
-   async cancelRun(id) { await this.json(this.rp(`/actions/runs/${id}/cancel`), { method: "POST" }); }
-   async rerunRun(id) { await this.json(this.rp(`/actions/runs/${id}/rerun`), { method: "POST" }); }
--  async openRunWeb(id) { await gh(["run", "view", String(id), "--web", "-R", `${this.repo.host}/${this.repo.slug}`], { cwd: this.cwd, on: this.on }); }
-+  async openRunWeb(id) { await gh(["run", "view", String(id), "--web", "-R", `${this.repo.host}/${this.repo.slug}`], this.opts()); }
+@@ -135,7 +168,7 @@
  
    /** Downloads one artifact into `dir`. exec() allows 30 s, so very large artifacts can time out. */
    async downloadArtifact(runId, name, dir) {
@@ -115,10 +110,10 @@ diff -ru a/gh.js b/gh.js
    }
  }
  
-diff -ru a/main.js b/main.js
---- a/main.js	2026-11-10 13:29:07
-+++ b/main.js	2026-11-10 13:29:07
-@@ -72,6 +72,15 @@
+diff -ru -x g ci-dash/main.js /Users/chris/.config/herdr-app/mods/ci-dash/main.js
+--- a/main.js	2026-11-12 18:31:26
++++ b/main.js	2026-11-13 09:45:55
+@@ -99,6 +99,15 @@
    return { cwd, on, branch };
  }
  
@@ -134,7 +129,7 @@ diff -ru a/main.js b/main.js
  async function dirExists(dir, on) {
    try {
      const r = isWin()
-@@ -141,10 +150,10 @@
+@@ -169,10 +178,10 @@
  
    ensureContext(cx) {
      const { cwd, on, branch } = location();
@@ -147,7 +142,7 @@ diff -ru a/main.js b/main.js
      this.resolve(cx, cwd, on);
    }
  
-@@ -168,8 +177,14 @@
+@@ -196,8 +205,14 @@
            this.gh.cwd = cwd; this.gh.on = on;
          }
        } catch (e) {
@@ -164,7 +159,7 @@ diff -ru a/main.js b/main.js
        } finally {
          this.resolving = false;
          const next = this.pending; this.pending = null;
-@@ -417,7 +432,7 @@
+@@ -515,7 +530,7 @@
      const artifactCount = this.art.groups.reduce((sum, g) => sum + g.artifacts.length, 0);
      return v_flex().flex_none()
        .child(h_flex().h(38).flex_none().px(12).gap(8).items_center()
@@ -172,8 +167,8 @@ diff -ru a/main.js b/main.js
 +        .child(div().font_semibold().flex_none().child("CI runs"))
          .when(Boolean(this.repo && this.gh?.on), (e) => e.child(machineChip(t, this.gh.on)))
          .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(this.repo ? this.repo.slug : ""))
-         .when(onArtifacts, (e) => e.child(this.button("folder", "↗", (cx) => this.openArtifactsFolder(cx), t, { disabled: !this.root })))
-@@ -439,7 +454,8 @@
+         .when(onArtifacts && !this.gh?.on, (e) => e.child(div().id("pick-folder-tip").tooltip(`Download folder: ${this.root ? this.artifactsRoot() : "(no repository)"}`)
+@@ -544,7 +559,8 @@
  
    errorView(t, error) {
      const text = error?.message || String(error);
@@ -183,24 +178,23 @@ diff -ru a/main.js b/main.js
    }
  
    /** Title and #number on top, then pills: branch, status, duration, trigger. */
-@@ -483,13 +499,9 @@
-       }
-     }
+@@ -607,13 +623,8 @@
+       : [];
+     const filtering = q || this.runStatus !== "all" || this.runWorkflow !== "all";
  
 -    const rows = [];
 -    for (const g of RUN_GROUPS) {
--      const inGroup = shown.filter((r) => groupOf(r) === g.id);
+-      const inGroup = shown.filter((r) => groupOf(r) === g.id).sort(RUN_SORTS[this.runSort]);
 -      if (!inGroup.length) continue;
 -      rows.push(section(t, g.label, inGroup.length, g.color(t)));
 -      for (const r of inGroup) rows.push(this.runRow(r, t));
 -    }
-+    // One list, newest first (the filter chips above narrow it by state).
-+    const when = (r) => Date.parse(r.run_started_at || r.created_at) || 0;
-+    const rows = [...shown].sort((x, y) => when(y) - when(x) || (y.id ?? 0) - (x.id ?? 0)).map((r) => this.runRow(r, t));
++    // One list in the chosen order (the filter chips above narrow it by state).
++    const rows = [...shown].sort((x, y) => RUN_SORTS[this.runSort](x, y) || (y.id ?? 0) - (x.id ?? 0)).map((r) => this.runRow(r, t));
  
      return v_flex().flex_1().min_h(0)
        .child(v_flex().flex_none().px(12).pt(10).pb(2).gap(8)
-@@ -651,7 +663,7 @@
+@@ -787,7 +798,7 @@
      else if (this.tab === "dispatch") body = this.dsp.view(t);
      else body = this.detail ? this.detailView(t) : this.runsView(t);
  
