@@ -109,8 +109,21 @@ def _say(state: str, block: str | None, msg: str | None, kw: dict) -> None:
         pass
 
 
+# A CLI opened its session: idle, so Herdr (hc run's first message, hc wait) sees Hermes ready before any turn.
+# The registry entry naming the CLI's tty may land a moment after the open: a few tries (this runs on its own thread).
+def _opened(kw: dict) -> None:
+    import time
+    sid = kw.get("session_id")
+    for _ in range(10):
+        if isinstance(sid, str) and sid and _tty_of(sid):
+            _say("idle", None, None, kw)
+            return
+        time.sleep(0.5)
+
+
 def register(ctx):
     on = lambda hook, state, block=None, msg=None: ctx.register_hook(hook, lambda **kw: _say(state, block, msg, kw))
+    ctx.register_hook("on_session_open", lambda **kw: _opened(kw))
     on("pre_llm_call", "working", msg="Thinking")  # a turn starts
     on("pre_api_request", "working", msg="Thinking")
     on("post_tool_call", "working", msg="Thinking")

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Chris F Ravenscroft <chris@voilaweb.com>
 Date: Thu, 12 Nov 2026 13:10:00 -0800
-Subject: [PATCH 17/19] local: Hermes as the Assistant: Settings, the New space
+Subject: [PATCH 17/20] local: Hermes as the Assistant: Settings, the New space
  dialog and the chat offer it (Auto or Full access = --yolo)
 
 ---

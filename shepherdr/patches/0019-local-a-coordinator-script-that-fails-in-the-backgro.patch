@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Chris F Ravenscroft <chris@voilaweb.com>
 Date: Thu, 12 Nov 2026 16:09:37 -0800
-Subject: [PATCH 19/19] local: a coordinator script that fails in the
+Subject: [PATCH 19/20] local: a coordinator script that fails in the
  background shows a toast (run-or-toast.sh, mods/toasts); restart.sh says when
  Herdr started no agent
 

@@ -1,0 +1,391 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chris F Ravenscroft <chris@voilaweb.com>
+Date: Thu, 12 Nov 2026 16:31:23 -0800
+Subject: [PATCH 20/20] local: Switch agent from a tab keeps an agent behind
+ its chat (its slot's pane when herdr.chat was lost); a new Hermes gets its
+ first message once ready, naming its terminal
+
+---
+ lib/coordinator.js                     | 20 +++++++++++++++++---
+ mods/coordinator/coordinator.js        | 20 +++++++++++++++++---
+ mods/coordinator/restart.sh            |  6 +++++-
+ mods/menu-tasks/coordinator.js         | 20 +++++++++++++++++---
+ mods/new-menu-tasks/coordinator.js     | 20 +++++++++++++++++---
+ mods/newspace/coordinator.js           | 20 +++++++++++++++++---
+ mods/shepherdr-settings/coordinator.js | 20 +++++++++++++++++---
+ mods/spaces-chat/coordinator.js        | 20 +++++++++++++++++---
+ mods/tabs-tasks/coordinator.js         | 20 +++++++++++++++++---
+ mods/tasks/coordinator.js              | 20 +++++++++++++++++---
+ 10 files changed, 158 insertions(+), 28 deletions(-)
+
+diff --git a/lib/coordinator.js b/lib/coordinator.js
+index 045ab01a..77647a20 100644
+--- a/lib/coordinator.js
++++ b/lib/coordinator.js
+@@ -97,9 +97,9 @@ export function entryFor(k, known) {
+ export const DETACH = 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null';
+ // local: through run-or-toast.sh, so a failure becomes a toast (mods/toasts reads data/coordinator/failed.txt)
+ const FAILED = { restart: "The agent didn't restart", close: "The Assistant didn't close", task: "The task's agent didn't switch" };
+-function script(name, args) {
++function script(name, args, env = []) { // local: env ("NAME=value"s) for the script
+   const dir = `${appHome()}/mods/coordinator`; // local: run-or-toast.sh
+-  return exec("bash", ["-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh
++  return exec("env", [...env, "bash", "-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh, env
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+@@ -480,7 +480,21 @@ export const switchTask = (k, agentKey) =>
+ 
+ // Restarts the agent `k` in its tab: with `argv`, as that agent; without, as it was
+ // (a coordinator from the template again, so edited instructions apply).
+-export const restartAgent = (k, argv) => script("restart", argv ? [k.address, JSON.stringify(argv)] : [k.address]);
++// local: an agent behind a chat restarts behind the same chat, as the chat's own picker does (lib/agent.js restart):
++// its herdr.chat label, else its Assistant slot's pane, else the one chat pane in its Assistant tab (an Assistant
++// whose herdr.chat was lost started its replacement as a pane in the tab, and the chat lost it).
++function chatOf(k) {
++  const l = k?.labels ?? {};
++  const chats = panes().filter((p) => p.mod === "chat");
++  const ok = (p) => (p && chats.some((q) => q.pane === p) ? p : null);
++  const tab = l["herdr.coordinator.tab"];
++  const inTab = tab ? chats.filter((p) => String(p.tab).split("/").pop() === tab) : [];
++  return ok(chatPane(k)) ?? ok(shared("coordinator.slots")?.[l["herdr.chat.slot"]]?.pane) ?? (inTab.length === 1 ? inTab[0].pane : null);
++}
++export const restartAgent = (k, argv) => { // local: chatOf
++  const chat = chatOf(k);
++  return script("restart", argv ? [k.address, JSON.stringify(argv)] : [k.address], chat ? [`HERDR_RESTART_CHAT=${chatLabel(chat)}`] : []);
++};
+ 
+ // Closes a tab. A coordinator with live workers asks first; a space's last tab closes the space,
+ // so it asks as Close space does (our confirm, not Herdr's).
+diff --git a/mods/coordinator/coordinator.js b/mods/coordinator/coordinator.js
+index 045ab01a..77647a20 100644
+--- a/mods/coordinator/coordinator.js
++++ b/mods/coordinator/coordinator.js
+@@ -97,9 +97,9 @@ export function entryFor(k, known) {
+ export const DETACH = 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null';
+ // local: through run-or-toast.sh, so a failure becomes a toast (mods/toasts reads data/coordinator/failed.txt)
+ const FAILED = { restart: "The agent didn't restart", close: "The Assistant didn't close", task: "The task's agent didn't switch" };
+-function script(name, args) {
++function script(name, args, env = []) { // local: env ("NAME=value"s) for the script
+   const dir = `${appHome()}/mods/coordinator`; // local: run-or-toast.sh
+-  return exec("bash", ["-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh
++  return exec("env", [...env, "bash", "-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh, env
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+@@ -480,7 +480,21 @@ export const switchTask = (k, agentKey) =>
+ 
+ // Restarts the agent `k` in its tab: with `argv`, as that agent; without, as it was
+ // (a coordinator from the template again, so edited instructions apply).
+-export const restartAgent = (k, argv) => script("restart", argv ? [k.address, JSON.stringify(argv)] : [k.address]);
++// local: an agent behind a chat restarts behind the same chat, as the chat's own picker does (lib/agent.js restart):
++// its herdr.chat label, else its Assistant slot's pane, else the one chat pane in its Assistant tab (an Assistant
++// whose herdr.chat was lost started its replacement as a pane in the tab, and the chat lost it).
++function chatOf(k) {
++  const l = k?.labels ?? {};
++  const chats = panes().filter((p) => p.mod === "chat");
++  const ok = (p) => (p && chats.some((q) => q.pane === p) ? p : null);
++  const tab = l["herdr.coordinator.tab"];
++  const inTab = tab ? chats.filter((p) => String(p.tab).split("/").pop() === tab) : [];
++  return ok(chatPane(k)) ?? ok(shared("coordinator.slots")?.[l["herdr.chat.slot"]]?.pane) ?? (inTab.length === 1 ? inTab[0].pane : null);
++}
++export const restartAgent = (k, argv) => { // local: chatOf
++  const chat = chatOf(k);
++  return script("restart", argv ? [k.address, JSON.stringify(argv)] : [k.address], chat ? [`HERDR_RESTART_CHAT=${chatLabel(chat)}`] : []);
++};
+ 
+ // Closes a tab. A coordinator with live workers asks first; a space's last tab closes the space,
+ // so it asks as Close space does (our confirm, not Herdr's).
+diff --git a/mods/coordinator/restart.sh b/mods/coordinator/restart.sh
+index d084f5f7..cf70e22e 100755
+--- a/mods/coordinator/restart.sh
++++ b/mods/coordinator/restart.sh
+@@ -138,10 +138,14 @@ else
+   one=herdr-handoff-$$
+   file=$HOME/.config/herdr-core/templates/$one.md
+   { printf -- '---\nname: %s\ndescription: A one-off Herdr handoff, removed after use.\ncommand: %s\n---\n' "$one" "$clean exec $line"
+-    printf '%s\n' "$msg"; } >"$file"
++    [ "$key" = hermes ] || printf '%s\n' "$msg"; } >"$file" # local: Hermes's message goes below, naming its terminal
+   out=$(hc run --bg --json --no-parent --cwd "$cwd" "${labels[@]}" --label "herdr.agent=$key" "$one")
+   rm -f "$file"
+   new=$(jq -r '.address // empty' <<<"$out")
++  # local: Hermes's tool shell has no HC_TERMINAL_ID: its first message says its terminal, sent once it's ready
++  # (the herdr-core-status plugin reports idle when the CLI opens its session).
++  [ -n "$new" ] && [ "$key" = hermes ] && msg+=$'\n\n'"Your own terminal is $new: your tool shell has no HC_TERMINAL_ID, so use $new wherever hc or herdr-task needs it." \
++    && out='{"first_message":{"sent":false}}'
+   # Some agents (Codex's animated start) never settle for hc: send once it reports a status.
+   if [ -n "$new" ] && [ "$(jq -r '.first_message.sent' <<<"$out")" = false ]; then
+     hc wait "$new" --timeout 90 >/dev/null 2>&1
+diff --git a/mods/menu-tasks/coordinator.js b/mods/menu-tasks/coordinator.js
+index 045ab01a..77647a20 100644
+--- a/mods/menu-tasks/coordinator.js
++++ b/mods/menu-tasks/coordinator.js
+@@ -97,9 +97,9 @@ export function entryFor(k, known) {
+ export const DETACH = 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null';
+ // local: through run-or-toast.sh, so a failure becomes a toast (mods/toasts reads data/coordinator/failed.txt)
+ const FAILED = { restart: "The agent didn't restart", close: "The Assistant didn't close", task: "The task's agent didn't switch" };
+-function script(name, args) {
++function script(name, args, env = []) { // local: env ("NAME=value"s) for the script
+   const dir = `${appHome()}/mods/coordinator`; // local: run-or-toast.sh
+-  return exec("bash", ["-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh
++  return exec("env", [...env, "bash", "-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh, env
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+@@ -480,7 +480,21 @@ export const switchTask = (k, agentKey) =>
+ 
+ // Restarts the agent `k` in its tab: with `argv`, as that agent; without, as it was
+ // (a coordinator from the template again, so edited instructions apply).
+-export const restartAgent = (k, argv) => script("restart", argv ? [k.address, JSON.stringify(argv)] : [k.address]);
++// local: an agent behind a chat restarts behind the same chat, as the chat's own picker does (lib/agent.js restart):
++// its herdr.chat label, else its Assistant slot's pane, else the one chat pane in its Assistant tab (an Assistant
++// whose herdr.chat was lost started its replacement as a pane in the tab, and the chat lost it).
++function chatOf(k) {
++  const l = k?.labels ?? {};
++  const chats = panes().filter((p) => p.mod === "chat");
++  const ok = (p) => (p && chats.some((q) => q.pane === p) ? p : null);
++  const tab = l["herdr.coordinator.tab"];
++  const inTab = tab ? chats.filter((p) => String(p.tab).split("/").pop() === tab) : [];
++  return ok(chatPane(k)) ?? ok(shared("coordinator.slots")?.[l["herdr.chat.slot"]]?.pane) ?? (inTab.length === 1 ? inTab[0].pane : null);
++}
++export const restartAgent = (k, argv) => { // local: chatOf
++  const chat = chatOf(k);
++  return script("restart", argv ? [k.address, JSON.stringify(argv)] : [k.address], chat ? [`HERDR_RESTART_CHAT=${chatLabel(chat)}`] : []);
++};
+ 
+ // Closes a tab. A coordinator with live workers asks first; a space's last tab closes the space,
+ // so it asks as Close space does (our confirm, not Herdr's).
+diff --git a/mods/new-menu-tasks/coordinator.js b/mods/new-menu-tasks/coordinator.js
+index 045ab01a..77647a20 100644
+--- a/mods/new-menu-tasks/coordinator.js
++++ b/mods/new-menu-tasks/coordinator.js
+@@ -97,9 +97,9 @@ export function entryFor(k, known) {
+ export const DETACH = 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null';
+ // local: through run-or-toast.sh, so a failure becomes a toast (mods/toasts reads data/coordinator/failed.txt)
+ const FAILED = { restart: "The agent didn't restart", close: "The Assistant didn't close", task: "The task's agent didn't switch" };
+-function script(name, args) {
++function script(name, args, env = []) { // local: env ("NAME=value"s) for the script
+   const dir = `${appHome()}/mods/coordinator`; // local: run-or-toast.sh
+-  return exec("bash", ["-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh
++  return exec("env", [...env, "bash", "-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh, env
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+@@ -480,7 +480,21 @@ export const switchTask = (k, agentKey) =>
+ 
+ // Restarts the agent `k` in its tab: with `argv`, as that agent; without, as it was
+ // (a coordinator from the template again, so edited instructions apply).
+-export const restartAgent = (k, argv) => script("restart", argv ? [k.address, JSON.stringify(argv)] : [k.address]);
++// local: an agent behind a chat restarts behind the same chat, as the chat's own picker does (lib/agent.js restart):
++// its herdr.chat label, else its Assistant slot's pane, else the one chat pane in its Assistant tab (an Assistant
++// whose herdr.chat was lost started its replacement as a pane in the tab, and the chat lost it).
++function chatOf(k) {
++  const l = k?.labels ?? {};
++  const chats = panes().filter((p) => p.mod === "chat");
++  const ok = (p) => (p && chats.some((q) => q.pane === p) ? p : null);
++  const tab = l["herdr.coordinator.tab"];
++  const inTab = tab ? chats.filter((p) => String(p.tab).split("/").pop() === tab) : [];
++  return ok(chatPane(k)) ?? ok(shared("coordinator.slots")?.[l["herdr.chat.slot"]]?.pane) ?? (inTab.length === 1 ? inTab[0].pane : null);
++}
++export const restartAgent = (k, argv) => { // local: chatOf
++  const chat = chatOf(k);
++  return script("restart", argv ? [k.address, JSON.stringify(argv)] : [k.address], chat ? [`HERDR_RESTART_CHAT=${chatLabel(chat)}`] : []);
++};
+ 
+ // Closes a tab. A coordinator with live workers asks first; a space's last tab closes the space,
+ // so it asks as Close space does (our confirm, not Herdr's).
+diff --git a/mods/newspace/coordinator.js b/mods/newspace/coordinator.js
+index 045ab01a..77647a20 100644
+--- a/mods/newspace/coordinator.js
++++ b/mods/newspace/coordinator.js
+@@ -97,9 +97,9 @@ export function entryFor(k, known) {
+ export const DETACH = 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null';
+ // local: through run-or-toast.sh, so a failure becomes a toast (mods/toasts reads data/coordinator/failed.txt)
+ const FAILED = { restart: "The agent didn't restart", close: "The Assistant didn't close", task: "The task's agent didn't switch" };
+-function script(name, args) {
++function script(name, args, env = []) { // local: env ("NAME=value"s) for the script
+   const dir = `${appHome()}/mods/coordinator`; // local: run-or-toast.sh
+-  return exec("bash", ["-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh
++  return exec("env", [...env, "bash", "-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh, env
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+@@ -480,7 +480,21 @@ export const switchTask = (k, agentKey) =>
+ 
+ // Restarts the agent `k` in its tab: with `argv`, as that agent; without, as it was
+ // (a coordinator from the template again, so edited instructions apply).
+-export const restartAgent = (k, argv) => script("restart", argv ? [k.address, JSON.stringify(argv)] : [k.address]);
++// local: an agent behind a chat restarts behind the same chat, as the chat's own picker does (lib/agent.js restart):
++// its herdr.chat label, else its Assistant slot's pane, else the one chat pane in its Assistant tab (an Assistant
++// whose herdr.chat was lost started its replacement as a pane in the tab, and the chat lost it).
++function chatOf(k) {
++  const l = k?.labels ?? {};
++  const chats = panes().filter((p) => p.mod === "chat");
++  const ok = (p) => (p && chats.some((q) => q.pane === p) ? p : null);
++  const tab = l["herdr.coordinator.tab"];
++  const inTab = tab ? chats.filter((p) => String(p.tab).split("/").pop() === tab) : [];
++  return ok(chatPane(k)) ?? ok(shared("coordinator.slots")?.[l["herdr.chat.slot"]]?.pane) ?? (inTab.length === 1 ? inTab[0].pane : null);
++}
++export const restartAgent = (k, argv) => { // local: chatOf
++  const chat = chatOf(k);
++  return script("restart", argv ? [k.address, JSON.stringify(argv)] : [k.address], chat ? [`HERDR_RESTART_CHAT=${chatLabel(chat)}`] : []);
++};
+ 
+ // Closes a tab. A coordinator with live workers asks first; a space's last tab closes the space,
+ // so it asks as Close space does (our confirm, not Herdr's).
+diff --git a/mods/shepherdr-settings/coordinator.js b/mods/shepherdr-settings/coordinator.js
+index 045ab01a..77647a20 100644
+--- a/mods/shepherdr-settings/coordinator.js
++++ b/mods/shepherdr-settings/coordinator.js
+@@ -97,9 +97,9 @@ export function entryFor(k, known) {
+ export const DETACH = 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null';
+ // local: through run-or-toast.sh, so a failure becomes a toast (mods/toasts reads data/coordinator/failed.txt)
+ const FAILED = { restart: "The agent didn't restart", close: "The Assistant didn't close", task: "The task's agent didn't switch" };
+-function script(name, args) {
++function script(name, args, env = []) { // local: env ("NAME=value"s) for the script
+   const dir = `${appHome()}/mods/coordinator`; // local: run-or-toast.sh
+-  return exec("bash", ["-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh
++  return exec("env", [...env, "bash", "-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh, env
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+@@ -480,7 +480,21 @@ export const switchTask = (k, agentKey) =>
+ 
+ // Restarts the agent `k` in its tab: with `argv`, as that agent; without, as it was
+ // (a coordinator from the template again, so edited instructions apply).
+-export const restartAgent = (k, argv) => script("restart", argv ? [k.address, JSON.stringify(argv)] : [k.address]);
++// local: an agent behind a chat restarts behind the same chat, as the chat's own picker does (lib/agent.js restart):
++// its herdr.chat label, else its Assistant slot's pane, else the one chat pane in its Assistant tab (an Assistant
++// whose herdr.chat was lost started its replacement as a pane in the tab, and the chat lost it).
++function chatOf(k) {
++  const l = k?.labels ?? {};
++  const chats = panes().filter((p) => p.mod === "chat");
++  const ok = (p) => (p && chats.some((q) => q.pane === p) ? p : null);
++  const tab = l["herdr.coordinator.tab"];
++  const inTab = tab ? chats.filter((p) => String(p.tab).split("/").pop() === tab) : [];
++  return ok(chatPane(k)) ?? ok(shared("coordinator.slots")?.[l["herdr.chat.slot"]]?.pane) ?? (inTab.length === 1 ? inTab[0].pane : null);
++}
++export const restartAgent = (k, argv) => { // local: chatOf
++  const chat = chatOf(k);
++  return script("restart", argv ? [k.address, JSON.stringify(argv)] : [k.address], chat ? [`HERDR_RESTART_CHAT=${chatLabel(chat)}`] : []);
++};
+ 
+ // Closes a tab. A coordinator with live workers asks first; a space's last tab closes the space,
+ // so it asks as Close space does (our confirm, not Herdr's).
+diff --git a/mods/spaces-chat/coordinator.js b/mods/spaces-chat/coordinator.js
+index 045ab01a..77647a20 100644
+--- a/mods/spaces-chat/coordinator.js
++++ b/mods/spaces-chat/coordinator.js
+@@ -97,9 +97,9 @@ export function entryFor(k, known) {
+ export const DETACH = 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null';
+ // local: through run-or-toast.sh, so a failure becomes a toast (mods/toasts reads data/coordinator/failed.txt)
+ const FAILED = { restart: "The agent didn't restart", close: "The Assistant didn't close", task: "The task's agent didn't switch" };
+-function script(name, args) {
++function script(name, args, env = []) { // local: env ("NAME=value"s) for the script
+   const dir = `${appHome()}/mods/coordinator`; // local: run-or-toast.sh
+-  return exec("bash", ["-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh
++  return exec("env", [...env, "bash", "-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh, env
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+@@ -480,7 +480,21 @@ export const switchTask = (k, agentKey) =>
+ 
+ // Restarts the agent `k` in its tab: with `argv`, as that agent; without, as it was
+ // (a coordinator from the template again, so edited instructions apply).
+-export const restartAgent = (k, argv) => script("restart", argv ? [k.address, JSON.stringify(argv)] : [k.address]);
++// local: an agent behind a chat restarts behind the same chat, as the chat's own picker does (lib/agent.js restart):
++// its herdr.chat label, else its Assistant slot's pane, else the one chat pane in its Assistant tab (an Assistant
++// whose herdr.chat was lost started its replacement as a pane in the tab, and the chat lost it).
++function chatOf(k) {
++  const l = k?.labels ?? {};
++  const chats = panes().filter((p) => p.mod === "chat");
++  const ok = (p) => (p && chats.some((q) => q.pane === p) ? p : null);
++  const tab = l["herdr.coordinator.tab"];
++  const inTab = tab ? chats.filter((p) => String(p.tab).split("/").pop() === tab) : [];
++  return ok(chatPane(k)) ?? ok(shared("coordinator.slots")?.[l["herdr.chat.slot"]]?.pane) ?? (inTab.length === 1 ? inTab[0].pane : null);
++}
++export const restartAgent = (k, argv) => { // local: chatOf
++  const chat = chatOf(k);
++  return script("restart", argv ? [k.address, JSON.stringify(argv)] : [k.address], chat ? [`HERDR_RESTART_CHAT=${chatLabel(chat)}`] : []);
++};
+ 
+ // Closes a tab. A coordinator with live workers asks first; a space's last tab closes the space,
+ // so it asks as Close space does (our confirm, not Herdr's).
+diff --git a/mods/tabs-tasks/coordinator.js b/mods/tabs-tasks/coordinator.js
+index 045ab01a..77647a20 100644
+--- a/mods/tabs-tasks/coordinator.js
++++ b/mods/tabs-tasks/coordinator.js
+@@ -97,9 +97,9 @@ export function entryFor(k, known) {
+ export const DETACH = 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null';
+ // local: through run-or-toast.sh, so a failure becomes a toast (mods/toasts reads data/coordinator/failed.txt)
+ const FAILED = { restart: "The agent didn't restart", close: "The Assistant didn't close", task: "The task's agent didn't switch" };
+-function script(name, args) {
++function script(name, args, env = []) { // local: env ("NAME=value"s) for the script
+   const dir = `${appHome()}/mods/coordinator`; // local: run-or-toast.sh
+-  return exec("bash", ["-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh
++  return exec("env", [...env, "bash", "-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh, env
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+@@ -480,7 +480,21 @@ export const switchTask = (k, agentKey) =>
+ 
+ // Restarts the agent `k` in its tab: with `argv`, as that agent; without, as it was
+ // (a coordinator from the template again, so edited instructions apply).
+-export const restartAgent = (k, argv) => script("restart", argv ? [k.address, JSON.stringify(argv)] : [k.address]);
++// local: an agent behind a chat restarts behind the same chat, as the chat's own picker does (lib/agent.js restart):
++// its herdr.chat label, else its Assistant slot's pane, else the one chat pane in its Assistant tab (an Assistant
++// whose herdr.chat was lost started its replacement as a pane in the tab, and the chat lost it).
++function chatOf(k) {
++  const l = k?.labels ?? {};
++  const chats = panes().filter((p) => p.mod === "chat");
++  const ok = (p) => (p && chats.some((q) => q.pane === p) ? p : null);
++  const tab = l["herdr.coordinator.tab"];
++  const inTab = tab ? chats.filter((p) => String(p.tab).split("/").pop() === tab) : [];
++  return ok(chatPane(k)) ?? ok(shared("coordinator.slots")?.[l["herdr.chat.slot"]]?.pane) ?? (inTab.length === 1 ? inTab[0].pane : null);
++}
++export const restartAgent = (k, argv) => { // local: chatOf
++  const chat = chatOf(k);
++  return script("restart", argv ? [k.address, JSON.stringify(argv)] : [k.address], chat ? [`HERDR_RESTART_CHAT=${chatLabel(chat)}`] : []);
++};
+ 
+ // Closes a tab. A coordinator with live workers asks first; a space's last tab closes the space,
+ // so it asks as Close space does (our confirm, not Herdr's).
+diff --git a/mods/tasks/coordinator.js b/mods/tasks/coordinator.js
+index 045ab01a..77647a20 100644
+--- a/mods/tasks/coordinator.js
++++ b/mods/tasks/coordinator.js
+@@ -97,9 +97,9 @@ export function entryFor(k, known) {
+ export const DETACH = 'if command -v setsid >/dev/null 2>&1; then setsid -f bash "$0" "$@"; else set -m; nohup bash "$0" "$@" & fi >/dev/null 2>&1 </dev/null';
+ // local: through run-or-toast.sh, so a failure becomes a toast (mods/toasts reads data/coordinator/failed.txt)
+ const FAILED = { restart: "The agent didn't restart", close: "The Assistant didn't close", task: "The task's agent didn't switch" };
+-function script(name, args) {
++function script(name, args, env = []) { // local: env ("NAME=value"s) for the script
+   const dir = `${appHome()}/mods/coordinator`; // local: run-or-toast.sh
+-  return exec("bash", ["-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh
++  return exec("env", [...env, "bash", "-c", DETACH, `${dir}/run-or-toast.sh`, FAILED[name] ?? `${name} failed`, `${dir}/${name}.sh`, ...args]); // local: run-or-toast.sh, env
+ }
+ 
+ // Where a space's coordinator works: its focused (else first) terminal's folder.
+@@ -480,7 +480,21 @@ export const switchTask = (k, agentKey) =>
+ 
+ // Restarts the agent `k` in its tab: with `argv`, as that agent; without, as it was
+ // (a coordinator from the template again, so edited instructions apply).
+-export const restartAgent = (k, argv) => script("restart", argv ? [k.address, JSON.stringify(argv)] : [k.address]);
++// local: an agent behind a chat restarts behind the same chat, as the chat's own picker does (lib/agent.js restart):
++// its herdr.chat label, else its Assistant slot's pane, else the one chat pane in its Assistant tab (an Assistant
++// whose herdr.chat was lost started its replacement as a pane in the tab, and the chat lost it).
++function chatOf(k) {
++  const l = k?.labels ?? {};
++  const chats = panes().filter((p) => p.mod === "chat");
++  const ok = (p) => (p && chats.some((q) => q.pane === p) ? p : null);
++  const tab = l["herdr.coordinator.tab"];
++  const inTab = tab ? chats.filter((p) => String(p.tab).split("/").pop() === tab) : [];
++  return ok(chatPane(k)) ?? ok(shared("coordinator.slots")?.[l["herdr.chat.slot"]]?.pane) ?? (inTab.length === 1 ? inTab[0].pane : null);
++}
++export const restartAgent = (k, argv) => { // local: chatOf
++  const chat = chatOf(k);
++  return script("restart", argv ? [k.address, JSON.stringify(argv)] : [k.address], chat ? [`HERDR_RESTART_CHAT=${chatLabel(chat)}`] : []);
++};
+ 
+ // Closes a tab. A coordinator with live workers asks first; a space's last tab closes the space,
+ // so it asks as Close space does (our confirm, not Herdr's).
