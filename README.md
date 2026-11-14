@@ -14,7 +14,7 @@ shepherdr/patches/*.patch     my commits on top of upstream Shepherdr (git forma
 shepherdr/BASE                the upstream commit/version they were last made on
 herdr/mods/theeyes            my mod: robot eyes whose mood follows the focused tab's agent (or ~/Tmp/the-muse/data/avatar.json)
 herdr/layouts/shepherdr-eyes.json  Shepherdr with agent cards and the eyes in the sidebar, T3 Actions in the top bar (added if missing, never overwritten)
-herdr/third-party/mods.txt    other people's mods, pinned (Git Grapher, CI Dash, Agent Cards, Copy on Select, T3 Actions); installed only when missing
+herdr/third-party/mods.txt    other people's mods, pinned (Git Grapher, CI Dash, Agent Cards, T3 Actions); installed only when missing
 herdr/third-party/*.patch     my changes to them (ci-dash.patch: other gh logins, plainer errors, "CI runs")
 hermes/plugins/herdr-core-status   Hermes plugin: tells Herdr when Hermes works, waits on you, is idle
 hermes/skills/herdr-terminals      Hermes skill: hc send/read/run, to talk to other agents
