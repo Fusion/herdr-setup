@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Chris F Ravenscroft <chris@voilaweb.com>
 Date: Thu, 12 Nov 2026 17:02:07 -0800
-Subject: [PATCH 21/21] local: a Hermes Assistant's first message starts with
+Subject: [PATCH 21/22] local: a Hermes Assistant's first message starts with
  its terminal's HC_* variables as an export line (hermes-env.sh): Hermes runs
  its commands in its gateway, without them
 

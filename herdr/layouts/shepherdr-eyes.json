@@ -320,6 +320,13 @@
                         }
                       ],
                       "active": "artifacts-list"
+                    },
+                    {
+                      "id": "sheepdog",
+                      "type": "block",
+                      "content": {
+                        "mod": "sheepdog"
+                      }
                     }
                   ],
                   "active": "tasks"
