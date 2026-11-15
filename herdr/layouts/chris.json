@@ -1,8 +1,8 @@
 {
   "id": "root",
   "cloned_from": {
-    "name": "shepherdr",
-    "version": "0.1.14"
+    "name": "shepherdr-eyes",
+    "version": "0.1.15"
   },
   "type": "row",
   "children": [
@@ -39,13 +39,13 @@
             {
               "id": "agents",
               "type": "block",
+              "content": {
+                "mod": "agent-cards"
+              },
               "size": {
                 "weight": 1
               },
-              "min": 90,
-              "content": {
-                "mod": "agent-cards"
-              }
+              "min": 90
             }
           ]
         },
@@ -88,10 +88,6 @@
         {
           "id": "topbar",
           "type": "row",
-          "resizable": false,
-          "size": {
-            "px": 42
-          },
           "children": [
             {
               "id": "tabs",
@@ -99,26 +95,30 @@
               "content": {
                 "mod": "tabs-tasks"
               },
-              "window_drag": true,
               "size": {
                 "weight": 1
-              }
+              },
+              "window_drag": true
             },
             {
               "id": "actions",
               "type": "block",
-              "size": {
-                "px": 108
-              },
-              "window_drag": true,
               "content": {
                 "mod": "t3-actions",
                 "props": {
                   "block": "actions"
                 }
-              }
+              },
+              "size": {
+                "px": 108
+              },
+              "window_drag": true
             }
-          ]
+          ],
+          "size": {
+            "px": 42
+          },
+          "resizable": false
         },
         {
           "id": "work-body",
@@ -216,20 +216,6 @@
                                     "props": {
                                       "panel": true
                                     }
-                                  }
-                                },
-                                {
-                                  "id": "tasks-thread-files",
-                                  "type": "block",
-                                  "content": {
-                                    "mod": "task-files"
-                                  }
-                                },
-                                {
-                                  "id": "tasks-thread-changes",
-                                  "type": "block",
-                                  "content": {
-                                    "mod": "task-changes"
                                   }
                                 },
                                 {
