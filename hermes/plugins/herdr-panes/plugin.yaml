@@ -1,0 +1,3 @@
+name: herdr-panes
+version: "1.0"
+description: Open a Herdr pane beside The Muse for each kanban worker, close it when the worker exits

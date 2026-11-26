@@ -90,16 +90,23 @@ d = json.load(open(p))
 if "cmd-alt-g" not in d.setdefault("global", {}):
     d["global"]["cmd-alt-g"] = {"command": "pane.split", "args": {"direction": "right", "mod": "git-grapher"}}
     json.dump(d, open(p, "w"), indent=2); print("added cmd-alt-g: Git Grapher beside the focused pane")
+# Layout chris-plain (no Shepherdr mods): ⌘K, ⌘⇧K and ⌃⇧K open Herdr's picker there (added only when missing).
+if "layout:chris-plain" not in d:
+    d["layout:chris-plain"] = {k: "mod.open:picker" for k in ("cmd-k", "cmd-shift-k", "ctrl-shift-k")}
+    json.dump(d, open(p, "w"), indent=2); print("added layout:chris-plain keys: picker")
 EOF
 
 # ---- 3. Hermes plugin and skill
 if command -v hermes >/dev/null && [ -d "$HOME/.hermes" ]; then
   say "Hermes plugin and skill"
   mkdir -p "$HOME/.hermes/plugins" "$HOME/.hermes/skills/autonomous-ai-agents"
-  cp -R "$KIT/hermes/plugins/herdr-core-status" "$HOME/.hermes/plugins/"
+  cp -R "$KIT/hermes/plugins/herdr-core-status" "$KIT/hermes/plugins/herdr-panes" "$HOME/.hermes/plugins/"
   cp -R "$KIT/hermes/skills/herdr-terminals" "$HOME/.hermes/skills/autonomous-ai-agents/"
-  hermes plugins disable herdr-core-status >/dev/null 2>&1 || true
-  hermes plugins enable herdr-core-status
+  for p in herdr-core-status herdr-panes; do
+    hermes plugins disable $p >/dev/null 2>&1 || true
+    hermes plugins enable $p
+  done
+  echo "herdr-panes loads when the Hermes gateway next restarts"
   # A Hermes Assistant runs Herdr's commands and read-only git without asking (hermes/command_allowlist.txt), through
   # Hermes's own config code, which keeps ${VAR} references in config.yaml as they are.
   py=$HOME/.hermes/hermes-agent/venv/bin/python
@@ -127,5 +134,26 @@ EOF2
   fi
 else
   say "Hermes not installed: skipped its plugin and skill"
+fi
+
+# ---- 4. Claude Code: one kanban card per subagent (claude/). Only adds: settings.json keeps everything it has.
+if [ -d "$HOME/.claude" ]; then
+  say "Claude subagent hook"
+  cp "$KIT/claude/herdr-subtask-hook.py" "$HOME/.claude/"
+  python3 - "$HOME/.claude/settings.json" "$KIT/claude/settings-hooks.json" <<'EOF'
+import json, os, shutil, sys
+p, add = sys.argv[1], json.load(open(sys.argv[2]))["hooks"]
+d = json.load(open(p)) if os.path.exists(p) else {}
+h, n = d.setdefault("hooks", {}), 0
+for ev, entries in add.items():
+    for e in entries:
+        if e not in h.setdefault(ev, []):
+            h[ev].append(e); n += 1
+if n:
+    if os.path.exists(p):
+        shutil.copy2(p, p + ".bak-herdr-setup")
+    json.dump(d, open(p, "w"), indent=2); open(p, "a").write("\n")
+print(f"Claude settings: {n} hook entries added" if n else "Claude settings: up to date")
+EOF
 fi
 say "done"

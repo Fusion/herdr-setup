@@ -18,6 +18,9 @@ herdr/third-party/mods.txt    other people's mods, pinned (Git Grapher, CI Dash,
 herdr/third-party/*.patch     my changes to them (ci-dash.patch: other gh logins, plainer errors, "CI runs")
 hermes/plugins/herdr-core-status   Hermes plugin: tells Herdr when Hermes works, waits on you, is idle
 hermes/skills/herdr-terminals      Hermes skill: hc send/read/run, to talk to other agents
+hermes/plugins/herdr-panes         Hermes plugin: worker panes, Herdr agents on the Hermes kanban, comments to agents
+claude/herdr-subtask-hook.py       Claude Code hook: one Hermes kanban card per subagent (settings-hooks.json wires it)
+herdr/layouts/chris-plain.json     Herdr's own mods only (no Shepherdr), with agent cards, the eyes and Sheepdog
 hermes/command_allowlist.txt       what a Hermes Assistant runs without asking (bin/apply adds it to ~/.hermes/config.yaml)
 ```
 
@@ -51,6 +54,14 @@ Other people's mods: to move one to a newer version, merge it into the installed
 commit in `herdr/third-party/mods.txt` and remake its patch (`diff -ru <upstream folder> <installed folder>`).
 My own mods: edit in `~/.config/herdr-app/mods/<mod>`, copy `main.js`/`mod.json` back into `herdr/mods/<mod>`
 and commit (`bin/apply` copies this repo's version over the installed one).
+
+## Hermes kanban and Herdr
+
+The Hermes kanban is the one board. The `herdr-panes` plugin runs inside the Hermes gateway and does four things. When a kanban worker starts, it opens a pane beside the Hermes terminal that shows the worker's log, names the pane after the card, and closes it when the worker exits. Once a minute it puts every busy Claude Code or Codex terminal on the board as a read-only card, on this machine and on every machine in `hc machine ls`, and it archives those cards a day after they finish. A comment on one of these cards goes to that agent with `hc send` when the agent is idle, and the card gets a receipt. Each Claude Code subagent also gets its own card. Run `python3 __init__.py --selftest` with Hermes's Python to check it. The plugin loads only when the Hermes gateway restarts.
+
+The subagent cards come from `claude/herdr-subtask-hook.py`. Claude Code runs it on PreToolUse and PostToolUse for `Agent|Task` and on SubagentStop. It puts a `muse.sub.<id>` label on its own terminal while a subagent runs and removes the label when the subagent stops. The plugin reads these labels through `hc`, so a remote machine needs only the hook and `hc`. Outside Herdr the hook does nothing. `bin/apply` installs it on this machine and only adds the three entries to `~/.claude/settings.json`. For a remote machine, back up its settings, copy the hook with `hc file write --on <machine> <home>/.claude/herdr-subtask-hook.py`, and merge `claude/settings-hooks.json` into its `settings.json`. A Claude session that already runs picks up the hook only after it restarts.
+
+Layout `chris-plain` uses only Herdr's own mods plus Agent Cards, T3 Actions, the eyes, Sheepdog and the file tree. Git Grapher and CI Dash still open with their global keys. `bin/apply` adds its keys (⌘K, ⌘⇧K and ⌃⇧K open Herdr's picker). Pick it with Ctrl+Shift+L.
 
 ## What the patches do
 
