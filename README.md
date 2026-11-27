@@ -20,7 +20,7 @@ claude/herdr-subtask-hook.py       Claude Code hook: one Hermes kanban card per 
 
 ## New machine
 
-1. Install Herdr, Bun, and (optionally) Hermes and Claude Code. Install the Sheepdog and filetree mods by hand: `chris-plain` uses them, and this repo doesn't install them yet.
+1. Install Herdr, Bun, and (optionally) Hermes and Claude Code. `chris-plain` uses the Sheepdog and filetree mods, and `bin/apply` installs them. The Sheepdog mod also needs the `sheepdog` program from [kccarlos/herdr-sheepdog](https://github.com/kccarlos/herdr-sheepdog), which you install by hand.
 2. Run `bin/apply`. It copies my mods and layout, installs the missing third-party mods with my patches, and adds the keys (⌘⌥G Git Grapher, ⌘⇧H hc-pick, and ⌘K / ⌘⇧K / ⌃⇧K for the picker in `chris-plain`). It only adds keys that are free. When Hermes is installed, it installs and enables both Hermes plugins and the skill, and adds the allowlist. When Claude Code is installed, it installs the subagent hook and adds its three entries to `~/.claude/settings.json`, after a backup.
 3. In Herdr pick the `chris-plain` layout (Ctrl+Shift+L), and restart the Hermes gateway so `herdr-panes` loads.
 
