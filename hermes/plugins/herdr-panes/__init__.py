@@ -432,6 +432,26 @@ def _deliver(kb, conn, m, send=None, now=None):
             log.warning("herdr-mirror: deliver %s: %s", e.get("card"), exc)
 
 
+# ---- crew: running / blocked Hermes cards for the theeyes mod (~/Tmp/the-muse/data/crew.json) -------
+
+CREW_PATH = Path.home() / "Tmp/the-muse/data/crew.json"
+
+
+def crew_counts(conn) -> dict:
+    """Running / blocked cards of real profiles: not the mirror's herdr-* cards, not its authorship."""
+    rows = conn.execute("SELECT status, COUNT(*) FROM tasks WHERE status IN ('running', 'blocked') "
+                        "AND assignee IS NOT NULL AND assignee NOT LIKE 'herdr-%' "
+                        "AND COALESCE(created_by, '') != ? GROUP BY status", (MIRROR_AUTHOR,)).fetchall()
+    return {"running": 0, "blocked": 0, **dict(rows)}
+
+
+def write_crew(conn, path: Path | None = None, now=None) -> dict:
+    import time
+    c = {**crew_counts(conn), "ts": int(now if now is not None else time.time())}
+    save_map(c, path or CREW_PATH)  # tmp + os.replace: atomic
+    return c
+
+
 def on_tick(board=None, dry_run=False, outcome=None, **_):
     if not herdr_available():
         return
@@ -452,7 +472,7 @@ def on_tick(board=None, dry_run=False, outcome=None, **_):
             for part in (lambda: _deliver(kb, conn, m), lambda: _sync_tasks(kb, kbd, conn, m, spaces),
                          lambda: _sync_agents(kb, kbd, conn, m),
                          lambda: _sync_subagents(kb, kbd, conn, m, *_live_subagents()),
-                         lambda: _archive_old(kb, conn)):
+                         lambda: _archive_old(kb, conn), lambda: write_crew(conn)):
                 try:
                     part()
                 except Exception as exc:
@@ -564,6 +584,15 @@ def _selftest_reconcile():
         conn.execute("UPDATE tasks SET completed_at = ? WHERE id = ?", (int(time.time()) - 2 * ARCHIVE_AFTER, a))
     assert _archive_old(kb, conn) == [a] and kb.get_task(conn, b).status == "done"
     print("subagents: ok")
+    # crew.json: a real profile's running card counts; mirror cards (running sub b above) don't
+    kb.create_task(conn, title="real", body="b", assignee="developer", created_by="default")
+    real = conn.execute("SELECT id FROM tasks WHERE title = 'real'").fetchone()[0]
+    with kb.write_txn(conn):
+        conn.execute("UPDATE tasks SET status = 'running' WHERE id = ?", (real,))
+        conn.execute("UPDATE tasks SET status = 'running' WHERE id = ?", (b,))  # mirror card, running
+    p = Path(tempfile.mkdtemp()) / "crew.json"
+    assert write_crew(conn, p, now=5) == {"running": 1, "blocked": 0, "ts": 5} == json.loads(p.read_text())
+    print("crew: ok")
 
 
 def _selftest_deliver(kb, conn):

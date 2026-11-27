@@ -1,28 +1,54 @@
 // theeyes: the Unity robot eyes (theeyes/Assets/Scripts/Avatar.cs) redrawn natively.
 // Mood: ~/Tmp/the-muse/data/avatar.json (written by avatar_set_expression) when < 60 s old,
-// else the focused tab's agent status. Motion is native (transition/loop); timers only for
-// the file poll, glances and blinks.
+// else every agent on every machine (terminals(), agents()) plus the Hermes crew
+// (~/Tmp/the-muse/data/crew.json, written by the herdr-panes plugin). Motion is native
+// (transition/loop); timers only for the file poll, glances and blinks.
 import { View, div, PathBuilder } from "gpui-kit";
-import { home, focused, spaces, readTextFile } from "herdr";
+import { home, agents, terminals, panes, focused, readTextFile } from "herdr";
 
 const BG = "#0b0f14", EYE = "#3cf2ff", PINK = "#ff5ca8", DROP = "#99e6ff";
 const EYE_W = 70, EYE_H = 70, GAP = 34, RAD = 18, PAD = 12; // 320x200 virtual canvas, as in Avatar.cs
 const MOODS = ["default", "happy", "tired", "angry", "thinking", "curious"];
 const ONE_SHOT_MS = { laugh: 1200, confused: 800, sweat: 3000 };
-const FRESH_S = 60;
-const FILE = `${home()}/Tmp/the-muse/data/avatar.json`;
+const FRESH_S = 60, CREW_FRESH_S = 180, TIRED_S = 15 * 60;
+const DATA = `${home()}/Tmp/the-muse/data`;
+const FILE = `${DATA}/avatar.json`, CREW = `${DATA}/crew.json`;
 
-// Agent status of the focused tab -> expression (blocked > done > working > idle, Herdr's own rollup).
-export function statusExpr(status) {
-  return { working: "thinking", blocked: "curious|question", done: "happy" }[status] ?? "default";
+// The fleet now -> expression. First match wins. statuses: every agent's status word ("error" only
+// while unseen); crew = parsed crew.json or null (ignored when > 180 s old); now, lastActive in seconds.
+export function statusExpr(statuses, crew, now, lastActive) {
+  const has = (s) => statuses.includes(s);
+  const c = crew && now - Number(crew.ts) < CREW_FRESH_S ? crew : { running: 0, blocked: 0 };
+  if (has("error")) return "angry";
+  if (has("blocked") || c.blocked > 0) return "curious|question";
+  if (has("done")) return "happy";
+  if (has("working") || c.running > 0) return "thinking";
+  if (now - lastActive > TIRED_S) return "tired";
+  return "default";
 }
 
-// Pure: which expression to show. file = parsed avatar.json or null; now in seconds.
-export function pick(file, status, now) {
+// Pure: which expression to show. file = parsed avatar.json or null; the rest as statusExpr.
+export function pick(file, statuses, crew, now, lastActive) {
   const fresh = file && typeof file.expr === "string" && now - Number(file.ts) < FRESH_S;
-  const [m, o = "none"] = (fresh ? file.expr : statusExpr(status)).split("|");
+  const [m, o = "none"] = (fresh ? file.expr : statusExpr(statuses, crew, now, lastActive)).split("|");
   if (MOODS.includes(m)) return { mood: m, overlay: o };
-  return { ...pick(null, status, now), oneShot: m in ONE_SHOT_MS ? m : null }; // one-shot over the status mood
+  return { ...pick(null, statuses, crew, now, lastActive), oneShot: m in ONE_SHOT_MS ? m : null }; // one-shot over the status mood
+}
+
+// Every agent's status word. agents() for done (it turns idle once seen); terminals() for working /
+// blocked on every machine, sub-agents included, and for error exactly as the spaces-chat sidebar
+// reads it (outcome): an error counts until its pane is focused (errSeen: address -> status_ms seen).
+const errSeen = new Map();
+function statuses() {
+  const out = agents().map((a) => a.status).filter((s) => s !== "error"), ps = panes(), now = focused()?.pane;
+  for (const k of terminals()) {
+    if (k.status === "working" || k.status === "blocked") out.push(k.status);
+    if (k.status !== "error") continue;
+    const p = ps.find((p) => p.terminal === k.address) ?? ps.find((p) => p.pane === k.labels?.["herdr.chat"]);
+    if (p && p.pane === now) errSeen.set(k.address, k.status_ms);
+    if (errSeen.get(k.address) !== k.status_ms) out.push("error");
+  }
+  return out;
 }
 
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -31,6 +57,8 @@ export default class TheEyes extends View {
   init(_props, cx) {
     this.size = { width: 268, height: 140 };
     this.file = null;
+    this.crew = null;
+    this.lastActive = Date.now() / 1000; // last time any agent or the crew was busy: tired after 15 min
     this.played = 0;        // ts of the last one-shot played, so it plays once
     this.oneShot = null;
     this.look = { x: 0, y: 0 };
@@ -47,6 +75,9 @@ export default class TheEyes extends View {
       let file = null;
       try { file = JSON.parse((await readTextFile(FILE)) ?? "null"); } catch { file = null; }
       this.file = file;
+      let crew = null;
+      try { crew = JSON.parse((await readTextFile(CREW)) ?? "null"); } catch { crew = null; }
+      this.crew = crew;
       const shot = typeof file?.expr === "string" && Date.now() / 1000 - Number(file.ts) < FRESH_S ? file.expr.split("|")[0] : null;
       if (shot in ONE_SHOT_MS && file.ts !== this.played) {
         this.played = file.ts;
@@ -69,9 +100,10 @@ export default class TheEyes extends View {
   }
 
   render() {
-    const f = focused();
-    const tab = f && spaces().flatMap((s) => s.tabs).find((t) => t.id === f.tab);
-    const { mood, overlay } = pick(this.file, tab?.status ?? null, Date.now() / 1000);
+    const now = Date.now() / 1000, st = statuses(), c = this.crew;
+    const crewBusy = c && now - Number(c.ts) < CREW_FRESH_S && (c.running > 0 || c.blocked > 0);
+    if (crewBusy || st.some((x) => x !== "idle")) this.lastActive = now;
+    const { mood, overlay } = pick(this.file, st, c, now, this.lastActive);
     const oneShot = this.oneShot;
 
     const { width: W, height: H } = this.size, s = Math.min(W / 320, H / 200);

@@ -94,6 +94,10 @@ if "cmd-alt-g" not in d.setdefault("global", {}):
 if "layout:chris-plain" not in d:
     d["layout:chris-plain"] = {k: "mod.open:picker" for k in ("cmd-k", "cmd-shift-k", "ctrl-shift-k")}
     json.dump(d, open(p, "w"), indent=2); print("added layout:chris-plain keys: picker")
+# ⌘⇧H opens hc-pick in every layout: inserts an hc reference into the focused terminal (added only when missing).
+if "cmd-shift-h" not in d["global"]:
+    d["global"]["cmd-shift-h"] = "mod.open:hc-pick"
+    json.dump(d, open(p, "w"), indent=2); print("added cmd-shift-h: hc-pick")
 EOF
 
 # ---- 3. Hermes plugin and skill
