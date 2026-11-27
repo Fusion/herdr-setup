@@ -1,60 +1,34 @@
 # herdr-setup
 
-My changes to Shepherdr (a layout for the Herdr app) and the Hermes pieces that make Hermes a
-Chat|Terminal agent in it. This repo holds only my changes. Shepherdr, Herdr and Hermes are installed
-the usual way.
+My setup for the [Herdr](https://herdr.dev) app on top of plain Herdr: my own mods, a layout, other people's mods with my patches, keys, and the Hermes and Claude Code pieces that put every agent on one Hermes kanban. This repo holds only my changes. Herdr, Hermes and Claude Code are installed the usual way.
 
-Built on [Shepherdr](https://github.com/eliasstravik/shepherdr) by Elias Stravik (MIT); not affiliated
-with Shepherdr, Herdr or Hermes. MIT licensed, see LICENSE.
+Not affiliated with Herdr, Hermes or Claude Code. MIT licensed, see LICENSE.
 
 ```
-bin/apply                     set up a machine, or update to the latest Shepherdr (see below)
-bin/export                    save the Shepherdr checkout's `local` branch back into shepherdr/patches
-shepherdr/patches/*.patch     my commits on top of upstream Shepherdr (git format-patch)
-shepherdr/BASE                the upstream commit/version they were last made on
-herdr/mods/theeyes            my mod: robot eyes whose mood follows every agent, errors and the Hermes crew (or ~/Tmp/the-muse/data/avatar.json)
-herdr/mods/hc-pick            my mod: ⌘⇧H lists terminals; Enter types an hc reference (address, space / tab, agent, session title) into the focused one
-herdr/layouts/chris.json          Shepherdr with agent cards and the eyes in the sidebar, T3 Actions and Sheepdog in the top bar (added if missing, never overwritten)
-herdr/third-party/mods.txt    other people's mods, pinned (Git Grapher, CI Dash, Agent Cards, T3 Actions); installed only when missing
-herdr/third-party/*.patch     my changes to them (ci-dash.patch: other gh logins, plainer errors, "CI runs")
-hermes/plugins/herdr-core-status   Hermes plugin: tells Herdr when Hermes works, waits on you, is idle
+bin/apply                          set up a machine, or bring it up to date
+herdr/mods/theeyes                 my mod: robot eyes whose mood follows every agent, errors and the Hermes crew (or ~/Tmp/the-muse/data/avatar.json)
+herdr/mods/hc-pick                 my mod: ⌘⇧H lists terminals; Enter types an hc reference (address, space / tab, agent, session title) into the focused one
+herdr/layouts/chris-plain.json     my layout: agent cards, the eyes and Sheepdog (added if missing, never overwritten)
+herdr/third-party/mods.txt         other people's mods, pinned (Git Grapher, CI Dash, Agent Cards, T3 Actions); installed only when missing
+herdr/third-party/*.patch          my changes to them (ci-dash.patch: other gh logins, plainer errors, "CI runs")
+hermes/plugins/herdr-core-status   Hermes plugin: tells Herdr when Hermes works, waits on you, is idle, or a turn failed
+hermes/plugins/herdr-panes         Hermes plugin: worker panes, Herdr agents on the Hermes kanban, comments to agents, crew counts for the eyes
 hermes/skills/herdr-terminals      Hermes skill: hc send/read/run, to talk to other agents
-hermes/plugins/herdr-panes         Hermes plugin: worker panes, Herdr agents on the Hermes kanban, comments to agents
-claude/herdr-subtask-hook.py       Claude Code hook: one Hermes kanban card per subagent (settings-hooks.json wires it)
-herdr/layouts/chris-plain.json     Herdr's own mods only (no Shepherdr), with agent cards, the eyes and Sheepdog
 hermes/command_allowlist.txt       what a Hermes Assistant runs without asking (bin/apply adds it to ~/.hermes/config.yaml)
+claude/herdr-subtask-hook.py       Claude Code hook: one Hermes kanban card per subagent (settings-hooks.json wires it)
 ```
 
 ## New machine
 
-1. Install Herdr, Bun, and (optionally) Hermes.
-2. `bin/apply`: clones Shepherdr to `~/Projects/shepherdr` (or `$SHEPHERDR_DIR`), makes branch
-   `local` from upstream main plus the patches, runs the checks, installs Shepherdr with your keys
-   kept, applies the two post-install fixes, installs the Hermes plugin and skill, and adds the
-   Hermes Assistant's commands to Hermes's `command_allowlist`.
-3. In Herdr pick the Shepherdr layout (Ctrl+Shift+L).
+1. Install Herdr, Bun, and (optionally) Hermes and Claude Code. Install the Sheepdog and filetree mods by hand: `chris-plain` uses them, and this repo doesn't install them yet.
+2. Run `bin/apply`. It copies my mods and layout, installs the missing third-party mods with my patches, and adds the keys (⌘⌥G Git Grapher, ⌘⇧H hc-pick, and ⌘K / ⌘⇧K / ⌃⇧K for the picker in `chris-plain`). It only adds keys that are free. When Hermes is installed, it installs and enables both Hermes plugins and the skill, and adds the allowlist. When Claude Code is installed, it installs the subagent hook and adds its three entries to `~/.claude/settings.json`, after a backup.
+3. In Herdr pick the `chris-plain` layout (Ctrl+Shift+L), and restart the Hermes gateway so `herdr-panes` loads.
 
-## Updating (new Shepherdr or Hermes release)
-
-```sh
-bin/apply          # fetch upstream, rebase `local` onto it, check, install
-bin/export         # if the rebase changed anything (a conflict fixed), save it here
-git commit -am "rebase on <version>"
-```
-
-A conflict stops `bin/apply` in the Shepherdr checkout. Fix the files (`git grep -n "local:"`
-shows every line I touched in an upstream file; the table below says why), `git add`, `git rebase
---continue` (or `git am --continue` on a new machine), run `bin/apply` again, then `bin/export`.
+Run `bin/apply` again after a change here or a new Herdr or Hermes release. It is safe to repeat: my mods get this repo's version, and everything else is only added when missing.
 
 ## Changing something
 
-Shepherdr part: edit and commit on branch `local` in the checkout (start the message with `local:`
-and mark touched upstream lines with a `local:` comment), then `bin/export` and commit here.
-Hermes part: edit under `hermes/` here, then `bin/apply --no-pull`.
-Other people's mods: to move one to a newer version, merge it into the installed copy, then set its
-commit in `herdr/third-party/mods.txt` and remake its patch (`diff -ru <upstream folder> <installed folder>`).
-My own mods: edit in `~/.config/herdr-app/mods/<mod>`, copy `main.js`/`mod.json` back into `herdr/mods/<mod>`
-and commit (`bin/apply` copies this repo's version over the installed one).
+My own mods: edit in `~/.config/herdr-app/mods/<mod>`, run its `bun test`, copy `main.js`, `mod.json` and any other file it needs back into `herdr/mods/<mod>`, and commit. `bin/apply` copies this repo's version over the installed one. Hermes and Claude parts: edit them here, then run `bin/apply`. Other people's mods: to move one to a newer version, merge it into the installed copy, then set its commit in `herdr/third-party/mods.txt` and remake its patch (`diff -ru <upstream folder> <installed folder>`).
 
 ## Hermes kanban and Herdr
 
@@ -62,36 +36,4 @@ The Hermes kanban is the one board. The `herdr-panes` plugin runs inside the Her
 
 The subagent cards come from `claude/herdr-subtask-hook.py`. Claude Code runs it on PreToolUse and PostToolUse for `Agent|Task` and on SubagentStop. It puts a `muse.sub.<id>` label on its own terminal while a subagent runs and removes the label when the subagent stops. The plugin reads these labels through `hc`, so a remote machine needs only the hook and `hc`. Outside Herdr the hook does nothing. `bin/apply` installs it on this machine and only adds the three entries to `~/.claude/settings.json`. For a remote machine, back up its settings, copy the hook with `hc file write --on <machine> <home>/.claude/herdr-subtask-hook.py`, and merge `claude/settings-hooks.json` into its `settings.json`. A Claude session that already runs picks up the hook only after it restarts.
 
-Layout `chris-plain` uses only Herdr's own mods plus Agent Cards, T3 Actions, the eyes, Sheepdog and the file tree. Git Grapher and CI Dash still open with their global keys. `bin/apply` adds its keys (⌘K, ⌘⇧K and ⌃⇧K open Herdr's picker). Pick it with Ctrl+Shift+L.
-
-## What the patches do
-
-| # | Change | Files | Why |
-|---|---|---|---|
-| 1 | Shepherdr's global keys moved into `layout:shepherdr`; terminal `ctrl-v` dropped | `keys.json` | Keys only apply while the Shepherdr layout is active. Breaks 2 keys tests on purpose |
-| 2 | Files panel shows the `filetree` mod, labelled "Tree" | `layouts/shepherdr.json`, `mods/tabs-tasks/main.js` | Preferred tree view |
-| 3 | Sidebar row shows a breathing dot while any agent in the space works | `mods/spaces-chat/main.js` | Upstream only shows spaces that need you |
-| 3b | Sidebar row shows a green dot when work finished while you weren't looking, red when an agent reported an error you haven't looked at | `mods/spaces-chat/main.js` (`outcome`) | Same; green follows Herdr's "done", red the core status `error` |
-| 3c | Right-click a pane's header: a menu like a tab's with Rename…. The name replaces the program's ("Claude Code"); empty restores it | `mods/pane-chat/main.js`, `mods/menu-tasks/main.js` (`pane-head` menu), `mods/prompt-chat/main.js` (`setLabel` prop) | Stored as core label `shepherdr.name` on the terminal, so it survives Chat/Terminal swaps and shows on every screen |
-| 4 | Hermes in the Chat view: history, tool rows, failed steps, questions answered from the card, Stop = Ctrl+C, the chat ends when Hermes exits | new `core/hermes.js` (copied into `mods/chat/core`, `mods/pane-chat/core` by `bin/sync-shared`, listed in `lib/COPIES`); hooks in `core/chat-log.js`, `core/chat-reader.js`, `mods/chat/main.js`, `mods/pane-chat/main.js`; `test/hermes.test.js` | Reads `~/.hermes/state.db`; the session comes from `~/.hermes/runtime/active_sessions.json` |
-| 5 | Hermes plugin `herdr-core-status`: working / waiting on you / idle, and `error` when a turn fails (not when you stop it) | `hermes/plugins/` here | Hermes 0.23 runs turns in its gateway, so the plugin writes Herdr's status escape (OSC 7501, `msg` base64) to the CLI's tty |
-| 6 | Hermes skill `herdr-terminals` | `hermes/skills/` here | Teaches Hermes `hc`, so its chat shows the messages it sends other agents |
-| 7 | Hermes as the **Assistant**: Settings (Assistant row only), the New space dialog and the chat's model menu offer Hermes when it is installed. Model: Hermes's own default or one typed by id (`-m`). Permissions: Auto (plain `hermes`) or Full access (`--yolo`) | `core/hermes.js` (`hermesMenu`, `hermesArgv`, `hermesCurrent`, `withoutHermes`; now also copied into `chat-models`, `newspace`, `shepherdr-settings`, `coordinator`); hooks in `core/agents.js`, `lib/settings.js`, `mods/shepherdr-settings/main.js`, `mods/chat/main.js`, `mods/chat-models/main.js`, `herdr_task/settings.py` (`argv_for`); `test/hermes.test.js`, `test/test_hermes_settings.py` | Workers and the Reviewer keep Claude Code and Codex: `herdr-task`'s first prompt and resume don't know Hermes |
-| 8 | A restart from a Hermes agent (to another agent, or another Hermes) hands over its last 40 messages in a file beside the saved screen, and a `sqlite3` line to read more | new `mods/coordinator/hermes-history.sh`; hook in `mods/coordinator/restart.sh` | Hermes has no log file per session; found as `HERMES_FIND` does (`active_sessions.json` + `state.db`) |
-| 9 | Auto approvals: `bin/apply` adds `hermes/command_allowlist.txt` (`herdr-task`, `hc`, `herdr-artifact`, `herdr-secret`, read-only `git`) to `command_allowlist` in `~/.hermes/config.yaml` through Hermes's own config code; it only adds | `bin/apply`, `hermes/` here | The chat has no approval cards for Hermes, and Hermes has no per-launch allowlist flag |
-| 10 | The picker under a running Assistant's chat offers Hermes (patch 18) | `mods/chat/main.js` (`openPicker`) | It built only Claude Code and Codex menus. (The tab's Switch agent needing `setsid`, and restart.sh's `mapfile` under macOS's bash 3.2, were fixed here first; upstream fixed both in 3.1.33, #736, so those parts are dropped) |
-| 11 | A coordinator script (restart, close, a task's switch) that fails in the background shows a toast; `restart.sh` says when Herdr started no agent (patch 19) | new `mods/coordinator/run-or-toast.sh`, started through upstream's `DETACH` by `lib/coordinator.js` (`script`, copied into each mod); `mods/toasts/main.js` (reads `data/coordinator/failed.txt` every 3 s); `mods/coordinator/restart.sh` | The scripts run detached with their output thrown away, so a failure vanished; upstream has no toast for it |
-| 12 | A tab's Switch agent keeps an agent that lives behind a chat behind it (patch 20): its `herdr.chat`, else its Assistant slot's pane, else the one chat pane in its Assistant tab. The Hermes plugin reports idle when a CLI opens its session, so hc delivers a new Hermes's first message (template + handoff) at once | `lib/coordinator.js` (`chatOf`, `restartAgent`, `script`'s env); `hermes/plugins/herdr-core-status` (`on_session_open`) here | An Assistant that lost its `herdr.chat` label restarted as a new pane in the tab, outside its chat. A new Hermes reported no status until its first turn, so hc never sent the first message and restart.sh waited out 90 s first |
-| 13 | A Hermes Assistant's first message (a restart's handoff, or a new Assistant's start from its chat) begins with its terminal's `HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET` and `HC_SCOPE` as a ready-to-run export line (patch 21) | new `mods/coordinator/hermes-env.sh` (reads them from the terminal's own process); `mods/coordinator/restart.sh` and `mods/chat/main.js` (`startAgent`) send that message once Hermes runs (90 s fallback without a ready signal); `test/hermes-env.test.js` | Hermes runs its commands through its long-lived gateway, started before the tab, so they lack the terminal's variables (`HC_SCOPE` differs per terminal): `hc get $HC_TERMINAL_ID`, `--parent` and `hc wait --children` broke |
-
-Post-install fixes `bin/apply` makes every time: removes `ctrl-k` (jump) from `layout:shepherdr` in
-`~/.config/herdr-app/keys.json` (only cmd-k wanted), and replaces `mods/tabs-tasks/main.js` with the
-installer's `main.js.new` when it writes one.
-
-Hermes limits: its shell commands run in its gateway without the terminal's `HC_*` variables, so its first message carries them as an export line it puts before each `hc`/`herdr-task` command (row 13); no approval cards (Auto still stops at a risky command outside the allowlist, like a hard git reset:
-answer it in the terminal, or pick Full access), background jobs or slash menu; not for task workers or the Reviewer;
-no reasoning level; the web app's Settings don't offer it (only the window's); a model change restarts it with a
-handoff, never in the same session; the allowlist matches a whole command, so one with a pipe, `;` or `&&` can still
-ask; after `/new` the chat keeps
-the first session until Hermes restarts; quitting Hermes mid-turn can leave the sidebar dot on;
-depends on Hermes's state.db layout and its question picker's keys.
+Layout `chris-plain` uses Herdr's own mods plus Agent Cards, T3 Actions, the eyes, Sheepdog and the file tree. Git Grapher and CI Dash still open with their global keys. `bin/apply` adds its keys (⌘K, ⌘⇧K and ⌃⇧K open Herdr's picker). Pick it with Ctrl+Shift+L.
